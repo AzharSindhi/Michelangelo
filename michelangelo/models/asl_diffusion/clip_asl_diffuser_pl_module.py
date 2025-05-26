@@ -5,6 +5,7 @@ from typing import List, Tuple, Dict, Optional, Union
 
 import torch
 import torch.nn as nn
+from michelangelo.utils import LambdaWarmUpCosineFactorScheduler
 import torch.nn.functional as F
 from torch.optim import lr_scheduler
 import pytorch_lightning as pl
@@ -47,10 +48,12 @@ class ClipASLDiffuser(pl.LightningModule):
                  scale_by_std: bool = False,
                  z_scale_factor: float = 1.0,
                  ckpt_path: Optional[str] = None,
-                 ignore_keys: Union[Tuple[str], List[str]] = ()):
+                 ignore_keys: Union[Tuple[str], List[str]] = (),
+                 learning_rate: float = 1e-4):
 
         super().__init__()
 
+        self.learning_rate = learning_rate
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
 
@@ -128,29 +131,30 @@ class ClipASLDiffuser(pl.LightningModule):
         return zero_rank
 
     def configure_optimizers(self) -> Tuple[List, List]:
-
         lr = self.learning_rate
-
         trainable_parameters = list(self.model.parameters())
-        if self.optimizer_cfg is None:
-            optimizers = [torch.optim.AdamW(trainable_parameters, lr=lr, betas=(0.9, 0.99), weight_decay=1e-3)]
-            schedulers = []
-        else:
-            optimizer = instantiate_from_config(self.optimizer_cfg.optimizer, params=trainable_parameters)
-            scheduler_func = instantiate_from_config(
-                self.optimizer_cfg.scheduler,
-                max_decay_steps=self.trainer.max_steps,
-                lr_max=lr
-            )
-            scheduler = {
-                "scheduler": lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler_func.schedule),
-                "interval": "step",
-                "frequency": 1
-            }
-            optimizers = [optimizer]
-            schedulers = [scheduler]
-
-        return optimizers, schedulers
+        
+        # Initialize optimizer
+        optimizer = instantiate_from_config(
+            self.optimizer_cfg.optimizer,
+            params=trainable_parameters
+        )
+        
+        # Initialize scheduler if configured
+        schedulers = []
+        if hasattr(self, 'optimizer_cfg') and hasattr(self.optimizer_cfg, 'scheduler'):
+            scheduler_cfg = self.optimizer_cfg.scheduler
+            if hasattr(scheduler_cfg, 'params'):
+                scheduler = LambdaWarmUpCosineFactorScheduler(**scheduler_cfg.params)
+                scheduler.trainer = self.trainer  # Pass trainer reference for max_steps
+                scheduler_config = {
+                    'scheduler': torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler.schedule),
+                    'interval': 'step',
+                    'frequency': 1
+                }
+                schedulers = [scheduler_config]
+        
+        return [optimizer], schedulers
 
     @torch.no_grad()
     def encode_first_stage(self, surface: torch.FloatTensor, sample_posterior=True):

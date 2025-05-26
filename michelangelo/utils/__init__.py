@@ -2,3 +2,4 @@
 
 from .misc import get_config_from_file
 from .misc import instantiate_from_config
+from .lr_scheduler import LambdaWarmUpCosineFactorScheduler

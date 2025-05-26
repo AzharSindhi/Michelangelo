@@ -98,12 +98,27 @@ class ShapeAsLatentPLModule(pl.LightningModule):
 
     def forward(self,
                 pc: torch.FloatTensor,
-                feats: torch.FloatTensor,
-                volume_queries: torch.FloatTensor):
+                feats: Optional[torch.FloatTensor] = None,
+                sample_posterior: bool = True):
+        """
+        Forward pass for point cloud generation.
 
-        logits, center_pos, posterior = self.sal(pc, feats, volume_queries)
+        Args:
+            pc: Input point cloud [B, N, 3]
+            feats: Optional features [B, N, C]
+            sample_posterior: Whether to sample from posterior
 
-        return posterior, logits
+        Returns:
+            points: Generated point cloud [B, num_points, 3]
+            center_pos: Center positions [B, M, 3]
+            posterior: Posterior distribution or None
+        """
+        points, center_pos, posterior = self.sal(
+            pc=pc, 
+            feats=feats, 
+            sample_posterior=sample_posterior
+        )
+        return points, center_pos, posterior
 
     def encode(self, surface: torch.FloatTensor, sample_posterior=True):
 
@@ -130,54 +145,89 @@ class ShapeAsLatentPLModule(pl.LightningModule):
     def training_step(self, batch: Dict[str, torch.FloatTensor],
                       batch_idx: int, optimizer_idx: int = 0) -> torch.FloatTensor:
         """
+        Training step for point cloud reconstruction.
 
         Args:
             batch (dict): the batch sample, and it contains:
-                - surface (torch.FloatTensor): [bs, n_surface, (3 + input_dim)]
-                - geo_points (torch.FloatTensor): [bs, n_pts, (3 + 1)]
-
-            batch_idx (int):
-
-            optimizer_idx (int):
+                - surface (torch.FloatTensor): [bs, n_points, (3 + input_dim)]
+            batch_idx (int): batch index
+            optimizer_idx (int): optimizer index
 
         Returns:
-            loss (torch.FloatTensor):
-
+            loss (torch.FloatTensor): computed loss
         """
-
-        pc = batch["surface"][..., 0:3]
-        feats = batch["surface"][..., 3:]
-
-        volume_queries = batch["geo_points"][..., 0:3]
-        volume_labels = batch["geo_points"][..., -1]
-
-        posterior, logits = self(
-            pc=pc, feats=feats, volume_queries=volume_queries
+        # Input point cloud and ground truth points
+        pc = batch["surface"][..., 0:3]  # [B, N, 3]
+        feats = batch["surface"][..., 3:] if batch["surface"].shape[-1] > 3 else None
+        
+        # Use input points as ground truth
+        gt_points = pc
+        
+        # Forward pass
+        pred_points, _, posterior = self.sal(pc=pc, feats=feats)
+        
+        # Compute loss
+        loss, log_dict = self.loss(
+            posteriors=posterior,
+            pred_points=pred_points,
+            gt_points=gt_points,
+            split="train"
         )
-        aeloss, log_dict_ae = self.loss(posterior, logits, volume_labels, split="train")
-
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=logits.shape[0],
-                      sync_dist=False, rank_zero_only=True)
-
-        return aeloss
+        
+        # Log metrics
+        self.log_dict(
+            log_dict,
+            prog_bar=True,
+            logger=True,
+            batch_size=pred_points.shape[0],
+            sync_dist=False,
+            rank_zero_only=True
+        )
+        
+        return loss
 
     def validation_step(self, batch: Dict[str, torch.FloatTensor], batch_idx: int) -> torch.FloatTensor:
+        """
+        Validation step for point cloud reconstruction.
 
-        pc = batch["surface"][..., 0:3]
-        feats = batch["surface"][..., 3:]
+        Args:
+            batch (dict): the batch sample, and it contains:
+                - surface (torch.FloatTensor): [bs, n_points, (3 + input_dim)]
+            batch_idx (int): batch index
 
-        volume_queries = batch["geo_points"][..., 0:3]
-        volume_labels = batch["geo_points"][..., -1]
-
-        posterior, logits = self(
-            pc=pc, feats=feats, volume_queries=volume_queries,
+        Returns:
+            loss (torch.FloatTensor): computed loss
+        """
+        # Input point cloud and ground truth points
+        pc = batch["surface"][..., 0:3]  # [B, N, 3]
+        feats = batch["surface"][..., 3:] if batch["surface"].shape[-1] > 3 else None
+        
+        # Use input points as ground truth
+        gt_points = pc
+        
+        # Forward pass (don't sample from posterior during validation)
+        with torch.no_grad():
+            pred_points, _, posterior = self.sal(pc=pc, feats=feats, sample_posterior=False)
+            
+            # Compute loss
+            loss, log_dict = self.loss(
+                posteriors=posterior,
+                pred_points=pred_points,
+                gt_points=gt_points,
+                split="val"
+            )
+        
+        # Log metrics
+        self.log_dict(
+            log_dict,
+            prog_bar=True,
+            logger=True,
+            batch_size=pred_points.shape[0],
+            sync_dist=False,
+            rank_zero_only=True
         )
-        aeloss, log_dict_ae = self.loss(posterior, logits, volume_labels, split="val")
-
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=logits.shape[0],
-                      sync_dist=False, rank_zero_only=True)
-
-        return aeloss
+        
+        return loss
 
     def point2mesh(self,
                    pc: torch.FloatTensor,
