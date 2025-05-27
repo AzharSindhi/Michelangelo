@@ -29,12 +29,13 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                  loss_cfg,
                  optimizer_cfg: Optional[DictConfig] = None,
                  ckpt_path: Optional[str] = None,
-                 ignore_keys: Union[Tuple[str], List[str]] = ()):
+                 ignore_keys: Union[Tuple[str], List[str]] = (),
+                 device="cuda", dtype=torch.float32):
 
         super().__init__()
 
         shape_model: ShapeAsLatentModule = instantiate_from_config(
-            shape_module_cfg, device=None, dtype=None
+            shape_module_cfg, device=device, dtype=dtype
         )
         self.model: AlignedShapeAsLatentModule = instantiate_from_config(
             aligned_module_cfg, shape_model=shape_model
@@ -82,19 +83,17 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             print(f"Unexpected Keys: {unexpected}")
 
     def configure_optimizers(self) -> Tuple[List, List]:
-        lr = self.learning_rate
+        # lr = self.learning_rate
 
         trainable_parameters = list(self.model.parameters())
 
         if self.optimizer_cfg is None:
-            optimizers = [torch.optim.AdamW(trainable_parameters, lr=lr, betas=(0.9, 0.99), weight_decay=1e-3)]
+            optimizers = [torch.optim.AdamW(trainable_parameters, lr=1e-3, betas=(0.9, 0.99), weight_decay=1e-3)]
             schedulers = []
         else:
             optimizer = instantiate_from_config(self.optimizer_cfg.optimizer, params=trainable_parameters)
             scheduler_func = instantiate_from_config(
-                self.optimizer_cfg.scheduler,
-                max_decay_steps=self.trainer.max_steps,
-                lr_max=lr
+                self.optimizer_cfg.scheduler
             )
             scheduler = {
                 "scheduler": lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler_func.schedule),
@@ -178,8 +177,8 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         image = batch["image"]
         text = batch["text"]
 
-        volume_queries = batch["geo_points"][..., 0:3]
-        shape_labels = batch["geo_points"][..., -1]
+        volume_queries = batch["incomplete_points"][..., 0:3] #batch["geo_points"][..., 0:3]
+        shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1]) #batch["geo_points"][..., -1]
 
         embed_outputs, shape_logits, posteriors = self(surface, image, text, volume_queries)
 
@@ -202,8 +201,8 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         image = batch["image"]
         text = batch["text"]
 
-        volume_queries = batch["geo_points"][..., 0:3]
-        shape_labels = batch["geo_points"][..., -1]
+        volume_queries = batch["incomplete_points"][..., 0:3]  #batch["geo_points"][..., 0:3]
+        shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
 
         embed_outputs, shape_logits, posteriors = self(surface, image, text, volume_queries)
 

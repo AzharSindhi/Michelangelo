@@ -20,6 +20,7 @@ from michelangelo.models.tsal.inference_utils import extract_geometry
 from michelangelo.utils.misc import get_config_from_file, instantiate_from_config
 from michelangelo.utils.visualizers.pythreejs_viewer import PyThreeJSViewer
 from michelangelo.utils.visualizers import html_util
+import open3d as o3d
 
 def load_model(args):
 
@@ -35,12 +36,12 @@ def load_model(args):
 
 def load_surface(fp):
     
-    with np.load(args.pointcloud_path) as input_pc:
-        surface = input_pc['points']
-        normal = input_pc['normals']
+    input_pc = np.load(fp, allow_pickle=True)
+    surface = input_pc['points']
+    normal = input_pc['normals']
     
     rng = np.random.default_rng()
-    ind = rng.choice(surface.shape[0], 4096, replace=False)
+    ind = rng.choice(surface.shape[0], 4096, replace=True)
     surface = torch.FloatTensor(surface[ind])
     normal = torch.FloatTensor(normal[ind])
     
@@ -102,7 +103,7 @@ def reconstruction(args, model, bounds=(-1.25, -1.25, -1.25, 1.25, 1.25, 1.25), 
     
     # save
     os.makedirs(args.output_dir, exist_ok=True)
-    recon_mesh.export(os.path.join(args.output_dir, 'reconstruction.obj'))    
+    recon_mesh.export(os.path.join(args.output_dir, f'reconstruction.obj'))    
     
     print(f'-----------------------------------------------------------------------------')
     print(f'>>> Finished and mesh saved in {os.path.join(args.output_dir, "reconstruction.obj")}')
@@ -147,10 +148,25 @@ def text2mesh(args, model, num_samples=2, guidance_scale=7.5, box_v=1.1, octree_
     
     return 0
 
+def pointcloud2mesh(args, model, num_samples=2, guidance_scale=7.5, box_v=1.1, octree_depth=7):
+    
+    
+    return 0
+
+def estimate_normals(xyz_path, outpath="out.npz"):
+    pcd = o3d.io.read_point_cloud(xyz_path)
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    
+    points = np.array(pcd.points)
+    normals = np.array(pcd.points)
+    
+    np.savez(outpath, points=points, normals=normals)
+
 task_dick = {
     'reconstruction': reconstruction,
     'image2mesh': image2mesh,
     'text2mesh': text2mesh,
+    'pointcloud2mesh': pointcloud2mesh,
 }
 
 if __name__ == "__main__":
@@ -160,17 +176,26 @@ if __name__ == "__main__":
     3. Text-conditioned generation
     '''
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task", type=str, choices=['reconstruction', 'image2mesh', 'text2mesh'], required=True)
-    parser.add_argument("--config_path", type=str, required=True)
-    parser.add_argument("--ckpt_path", type=str, required=True)
+    parser.add_argument("--task", type=str, choices=['reconstruction', 'image2mesh', 'text2mesh'], default='reconstruction')
+    parser.add_argument("--config_path", type=str, default='configs/aligned_shape_latents/shapevae-256.yaml')
+    parser.add_argument("--ckpt_path", type=str, default='checkpoints/aligned_shape_latents/shapevae-256.ckpt')
     parser.add_argument("--pointcloud_path", type=str, default='./example_data/surface.npz', help='Path to the input point cloud')
     parser.add_argument("--image_path", type=str, help='Path to the input image')
     parser.add_argument("--text", type=str, help='Input text within a format: A 3D model of motorcar; Porsche 911.')
-    parser.add_argument("--output_dir", type=str, default='./output')
+    parser.add_argument("--output_dir", type=str, default='./output_pointclouds')
     parser.add_argument("-s", "--seed", type=int, default=0)
     args = parser.parse_args()
     
     pl.seed_everything(args.seed)
+
+    # args.config_path = "configs/image_cond_diffuser_asl/image-ASLDM-256.yaml"
+    # args.ckpt_path = "checkpoints/image_cond_diffusor_asl/image-ASLDM-256.ckpt"
+    # xyz_path = "out_pointclouds/epoch_0029/original_00.xyz"
+    args.pointcloud_path = "out_pointclouds/epoch_0029/original_dataloader_00.npz"
+    # estimate_normals(xyz_path, args.pointcloud_path)
+
+    args.image_path = "out_pointclouds/epoch_0029/original_dataloader_00.jpg"
+    args.text = "A 3D model of motorcar; Porsche 911."
 
     print(f'-----------------------------------------------------------------------------')
     print(f'>>> Running {args.task}')

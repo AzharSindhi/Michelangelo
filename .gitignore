@@ -196,4 +196,5 @@ lightning_logs/
 slurm_logs/
 checkpoints/
 checkpoints_runs/
+output_pointclouds/
 out_pointclouds/
