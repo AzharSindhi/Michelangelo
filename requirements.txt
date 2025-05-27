@@ -233,6 +233,7 @@ xatlas==0.0.7
 yacs==0.1.8
 yarl==1.8.2
 zipp==3.14.0
+open3d==0.19.0
 # torch==1.13.1+cu116 torchvision==0.14.1+cu116 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu116
 https://download.pytorch.org/whl/cu116/torch-1.13.1%2Bcu116-cp39-cp39-linux_x86_64.whl#sha256=db457a822d736013b6ffe509053001bc918bdd78fe68967b605f53984a9afac5
 https://download.pytorch.org/whl/cu116/torchvision-0.14.1%2Bcu116-cp39-cp39-linux_x86_64.whl#sha256=a9fc38040e133d1779f131b4497caef830e9e699faf89cd323cd58794ffb305b

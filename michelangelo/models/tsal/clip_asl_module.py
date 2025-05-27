@@ -95,12 +95,12 @@ class CLIPAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
         #     text_embed_all.append(text_embed)
         # text_embed_all = torch.stack(text_embed_all)
 
-        b = text.shape[0]
-        text_tokens = rearrange(text, "b t l -> (b t) l")
-        text_embed = self.encode_text_embed(text_tokens)
-        text_embed = rearrange(text_embed, "(b t) d -> b t d", b=b)
-        text_embed = text_embed.mean(dim=1)
-        text_embed = text_embed / text_embed.norm(dim=-1, keepdim=True)
+        # b = text.shape[0]
+        # text_tokens = rearrange(text, "b t l -> (b t) l")
+        # text_embed = self.encode_text_embed(text_tokens)
+        # text_embed = rearrange(text_embed, "(b t) d -> b t d", b=b)
+        # text_embed = text_embed.mean(dim=1)
+        # text_embed = text_embed / text_embed.norm(dim=-1, keepdim=True)
 
         # image embedding
         image_embed = self.encode_image_embed(image)
@@ -110,7 +110,7 @@ class CLIPAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
 
         embed_outputs = {
             "image_embed": image_embed,
-            "text_embed": text_embed,
+            "text_embed": None,
             "shape_embed": shape_embed,
             "logit_scale": self.clip_model.logit_scale.exp()
         }

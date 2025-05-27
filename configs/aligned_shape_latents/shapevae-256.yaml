@@ -1,10 +1,11 @@
 model:
   target: michelangelo.models.tsal.asl_pl_module.AlignedShapeAsLatentPLModule
   params:
+    ckpt_path: "checkpoints/aligned_shape_latents/shapevae-256.ckpt"
     shape_module_cfg:
       target: michelangelo.models.tsal.sal_perceiver.AlignedShapeLatentPerceiver
       params:
-        num_latents: 256
+        num_latents: 1024
         embed_dim: 64
         point_feats: 3   # normal
         num_freqs: 8
@@ -20,13 +21,14 @@ model:
     aligned_module_cfg:
       target: michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule
       params:
-        clip_model_version: "./checkpoints/clip/clip-vit-large-patch14"
+        clip_model_version: "openai/clip-vit-large-patch14"
 
     loss_cfg:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar
       params:
         contrast_weight: 0.1
-        near_weight: 0.1
+        chamfer_weight: 0.1
+        mse_weight: 0.2
         kl_weight: 0.001
 
     optimizer_cfg:
@@ -38,9 +40,17 @@ model:
           weight_decay: 1.e-2
 
       scheduler:
-        target: michelangelo.utils.trainings.lr_scheduler.LambdaWarmUpCosineFactorScheduler
+        target: michelangelo.utils.lr_scheduler.LambdaWarmUpCosineFactorScheduler
         params:
           warm_up_steps: 5000
           f_start: 1.e-6
           f_min: 1.e-3
           f_max: 1.0
+data:
+  data_dir: "~/Documents/datasets/ShapeNetViPC-Dataset"
+  batch_size: 38
+  num_workers: 8
+  view_align: true
+  category: "plane"
+  mini: true
+  image_size: 224

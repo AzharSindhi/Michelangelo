@@ -42,6 +42,6 @@ class LambdaWarmUpCosineFactorScheduler:
             
         return factor
     
-    def __call__(self, step):
-        """Alias for schedule for compatibility"""
-        return self.schedule(step)
+    # def __call__(self, step):
+    #     """Alias for schedule for compatibility"""
+    #     return self.schedule(step)

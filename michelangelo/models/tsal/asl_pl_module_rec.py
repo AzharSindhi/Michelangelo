@@ -19,22 +19,24 @@ from .tsal_base import (
     Latent2MeshOutput,
     AlignedMeshOutput
 )
+from .sal_perceiver import ResidualCrossAttentionBlock
 
 
 class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
-    def __init__(self, *,
+    def __init__(self,
                  shape_module_cfg,
                  aligned_module_cfg,
                  loss_cfg,
                  optimizer_cfg: Optional[DictConfig] = None,
                  ckpt_path: Optional[str] = None,
-                 ignore_keys: Union[Tuple[str], List[str]] = ()):
+                 ignore_keys: Union[Tuple[str], List[str]] = (),
+                 device="cuda", dtype=torch.float32):
 
         super().__init__()
 
         shape_model: ShapeAsLatentModule = instantiate_from_config(
-            shape_module_cfg, device=None, dtype=None
+            shape_module_cfg, device=device, dtype=dtype
         )
         self.model: AlignedShapeAsLatentModule = instantiate_from_config(
             aligned_module_cfg, shape_model=shape_model
@@ -46,6 +48,19 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
+
+        self.incomplete_query_proj = torch.nn.Linear(3, shape_model.width, device=device, dtype=dtype)
+
+        self.cross_attn_decoder = ResidualCrossAttentionBlock(
+            device=device,
+            dtype=dtype,
+            n_data=shape_model.num_latents - 1,
+            width=shape_model.width,
+            heads=8
+        )
+
+        self.ln_post = torch.nn.LayerNorm(shape_model.width, device=device, dtype=dtype)
+        self.output_proj = torch.nn.Linear(shape_model.width, 3, device=device, dtype=dtype)
 
         self.save_hyperparameters()
 
@@ -82,20 +97,15 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             print(f"Unexpected Keys: {unexpected}")
 
     def configure_optimizers(self) -> Tuple[List, List]:
-        lr = self.learning_rate
 
         trainable_parameters = list(self.model.parameters())
 
         if self.optimizer_cfg is None:
-            optimizers = [torch.optim.AdamW(trainable_parameters, lr=lr, betas=(0.9, 0.99), weight_decay=1e-3)]
+            optimizers = [torch.optim.AdamW(trainable_parameters, betas=(0.9, 0.99), weight_decay=1e-3)]
             schedulers = []
         else:
             optimizer = instantiate_from_config(self.optimizer_cfg.optimizer, params=trainable_parameters)
-            scheduler_func = instantiate_from_config(
-                self.optimizer_cfg.scheduler,
-                max_decay_steps=self.trainer.max_steps,
-                lr_max=lr
-            )
+            scheduler_func = instantiate_from_config(self.optimizer_cfg.scheduler)
             scheduler = {
                 "scheduler": lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler_func.schedule),
                 "interval": "step",
@@ -106,11 +116,16 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
         return optimizers, schedulers
 
+    def cross_attend(self, queries: torch.FloatTensor, context: torch.FloatTensor):
+        attnd = self.cross_attn_decoder(queries, context)
+        attnd = self.ln_post(attnd)
+        return attnd
+
     def forward(self,
                 surface: torch.FloatTensor,
                 image: torch.FloatTensor,
                 text: torch.FloatTensor,
-                volume_queries: torch.FloatTensor):
+                incomplete_points: torch.FloatTensor):
 
         """
 
@@ -118,17 +133,20 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             surface (torch.FloatTensor):
             image (torch.FloatTensor):
             text (torch.FloatTensor):
-            volume_queries (torch.FloatTensor):
+            incomplete_points (torch.FloatTensor):
 
         Returns:
 
         """
-
+        
         embed_outputs, shape_z = self.model(surface, image, text)
-
+        # cross attend with incomplete points
+        # incomplete_points = self.incomplete_query_proj(incomplete_points)
+        # shape_z = self.cross_attend(shape_z, incomplete_points)
         shape_zq, posterior = self.model.shape_model.encode_kl_embed(shape_z)
         latents = self.model.shape_model.decode(shape_zq)
-        logits = self.model.shape_model.query_geometry(volume_queries, latents)
+        # recon_pc = self.output_proj(latents)
+        logits = self.model.shape_model.query_geometry(incomplete_points, latents)
 
         return embed_outputs, logits, posterior
 
@@ -163,7 +181,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                 - surface (torch.FloatTensor): [bs, n_surface, (3 + input_dim)]
                 - image (torch.FloatTensor): [bs, 3, 224, 224]
                 - text (torch.FloatTensor): [bs, num_templates, 77]
-                - geo_points (torch.FloatTensor): [bs, n_pts, (3 + 1)]
+                - incomplete_points (torch.FloatTensor): [bs, n_pts, (3 + 1)]
 
             batch_idx (int):
 
@@ -177,21 +195,19 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         surface = batch["surface"]
         image = batch["image"]
         text = batch["text"]
+        incomplete_points = batch["incomplete_points"]
 
-        volume_queries = batch["geo_points"][..., 0:3]
-        shape_labels = batch["geo_points"][..., -1]
-
-        embed_outputs, shape_logits, posteriors = self(surface, image, text, volume_queries)
+        embed_outputs, logits, posteriors = self(surface, image, text, incomplete_points)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
-            shape_logits=shape_logits,
-            shape_labels=shape_labels,
+            logits=logits,
+            gt_pc=surface,
             split="train"
         )
 
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=shape_logits.shape[0],
+        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
                       sync_dist=False, rank_zero_only=True)
 
         return aeloss
@@ -201,20 +217,18 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         surface = batch["surface"]
         image = batch["image"]
         text = batch["text"]
+        incomplete_points = batch["incomplete_points"]
 
-        volume_queries = batch["geo_points"][..., 0:3]
-        shape_labels = batch["geo_points"][..., -1]
-
-        embed_outputs, shape_logits, posteriors = self(surface, image, text, volume_queries)
+        embed_outputs, reconstructed_pc, posteriors = self(surface, image, text, incomplete_points)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
-            shape_logits=shape_logits,
-            shape_labels=shape_labels,
+            reconstructed_pc=reconstructed_pc,
+            gt_pc=surface,
             split="val"
         )
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=shape_logits.shape[0],
+        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
                       sync_dist=False, rank_zero_only=True)
 
         return aeloss
@@ -223,6 +237,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                          surface: torch.FloatTensor,
                          image: torch.FloatTensor,
                          text: torch.FloatTensor,
+                         incomplete_points: torch.FloatTensor,
                          description: Optional[List[str]] = None,
                          bounds: Union[Tuple[float], List[float]] = (-1.25, -1.25, -1.25, 1.25, 1.25, 1.25),
                          octree_depth: int = 7,
@@ -234,6 +249,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             surface:
             image:
             text:
+            incomplete_points:
             description:
             bounds:
             octree_depth:
@@ -249,7 +265,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         device = surface.device
         bs = surface.shape[0]
 
-        embed_outputs, shape_z = self.model(surface, image, text)
+        embed_outputs, shape_z = self.model(surface, image, text, incomplete_points)
 
         # calculate the similarity
         image_embed = embed_outputs["image_embed"]
@@ -351,3 +367,4 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             outputs.append(out)
 
         return outputs
+

@@ -229,7 +229,7 @@ class ShapeAsLatentPerceiver(ShapeAsLatentModule):
             device=device,
             dtype=dtype,
             fourier_embedder=self.fourier_embedder,
-            out_channels=1,
+            out_channels=1, # for point cloud reconstruction
             num_latents=num_latents,
             width=width,
             heads=heads,

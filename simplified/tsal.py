@@ -190,6 +190,65 @@ class KLNearFarColor(nn.Module):
         return loss, log
 
 
+class PointCloudMSELoss(nn.Module):
+    def __init__(self, kl_weight: float = 1.0):
+        """
+        Loss function for point cloud output with MSE loss.
+        
+        Args:
+            kl_weight: Weight for KL divergence loss
+        """
+        super().__init__()
+        self.kl_weight = kl_weight
+        self.mse_criterion = nn.MSELoss()
+
+    def forward(self,
+                posteriors: Optional[DiagonalGaussianDistribution],
+                pred_points: torch.FloatTensor,
+                gt_points: torch.FloatTensor,
+                split: Optional[str] = "train") -> Tuple[torch.FloatTensor, Dict[str, float]]:
+        """
+        Compute MSE loss between predicted and ground truth point clouds.
+        
+        Args:
+            posteriors: Distribution from encoder
+            pred_points: Predicted point cloud [B, N, 3]
+            gt_points: Ground truth point cloud [B, N, 3]
+            split: Split name for logging
+            
+        Returns:
+            loss: Total loss
+            log: Dictionary of losses for logging
+        """
+        # Compute MSE loss
+        mse_loss = self.mse_criterion(pred_points, gt_points)
+        
+        # Compute KL divergence if using VAE
+        if posteriors is None:
+            kl_loss = torch.tensor(0.0, dtype=pred_points.dtype, device=pred_points.device)
+        else:
+            kl_loss = posteriors.kl(dims=(1, 2)).mean()
+        
+        # Total loss
+        loss = mse_loss + kl_loss * self.kl_weight
+        
+        # Logging
+        log = {
+            f"{split}/total_loss": loss.detach(),
+            f"{split}/mse": mse_loss.detach(),
+            f"{split}/kl": kl_loss.detach(),
+        }
+        
+        if posteriors is not None:
+            log.update({
+                f"{split}/mean": posteriors.mean.mean().detach(),
+                f"{split}/std_mean": posteriors.std.mean().detach(),
+                f"{split}/std_max": posteriors.std.max().detach()
+            })
+            
+        return loss, log
+
+
 class ContrastKLNearFar(nn.Module):
     def __init__(self,
                  contrast_weight: float = 1.0,

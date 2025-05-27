@@ -191,3 +191,9 @@ lightning_logs/
 *.jpg
 *.jpeg
 *.npy
+mlruns/
+lightning_logs/
+slurm_logs/
+checkpoints/
+checkpoints_runs/
+out_pointclouds/
