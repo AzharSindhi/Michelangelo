@@ -50,7 +50,9 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         self.learning_rate = optimizer_cfg.optimizer.params.lr
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
-
+        else:
+            print("No checkpoint provided, learning from scratch")
+        
         numpoints = 4096
         self.learnable_volume_queries = torch.nn.Parameter(torch.randn((numpoints, shape_model.width), device=device, dtype=dtype) * 0.02)
         # query = repeat(self.query, "m c -> b m c", b=bs)
@@ -78,7 +80,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         return zero_rank
 
     def init_from_ckpt(self, path, ignore_keys=()):
-        state_dict = torch.load(path, map_location="cpu")["state_dict"]
+        state_dict = torch.load(path, map_location="cpu", weights_only=False)["state_dict"]
 
         keys = list(state_dict.keys())
         for k in keys:

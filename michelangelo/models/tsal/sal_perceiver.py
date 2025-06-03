@@ -113,7 +113,7 @@ class CrossAttentionEncoder(nn.Module):
         return checkpoint(self._forward, (pc, feats), self.parameters(), self.use_checkpoint)
 
 class Mlp(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.ReLU, drop=0.0):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.ReLU, drop=0.1):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
@@ -137,6 +137,8 @@ class CrossAttentionDecoder(nn.Module):
                  dtype: Optional[torch.dtype],
                  num_latents: int,
                  out_channels: int,
+                 dropout: float = 0.1,
+                 num_layers: int = 2,
                  fourier_embedder: FourierEmbedder,
                  width: int,
                  heads: int,
@@ -151,9 +153,7 @@ class CrossAttentionDecoder(nn.Module):
         self.fourier_embedder = fourier_embedder
 
         self.query_proj = nn.Linear(self.fourier_embedder.out_dim, width)
-
-        num_layers = 2
-        cross_attn_block = nn.TransformerDecoderLayer(d_model=width, nhead=heads, batch_first=True, dropout=0.0)
+        cross_attn_block = nn.TransformerDecoderLayer(d_model=width, nhead=heads, batch_first=True, dropout=dropout)
         # cross_attn_block = ResidualCrossAttentionBlock(
         #     device=device,
         #     dtype=dtype,
@@ -164,7 +164,7 @@ class CrossAttentionDecoder(nn.Module):
         #     flash=flash,
         # )
         self.cross_attn_decoder = nn.ModuleList([copy.deepcopy(cross_attn_block) for _ in range(num_layers)])
-        offset_model = Mlp(width, hidden_features=width//4, out_features=3)#nn.Linear(width, 3)
+        offset_model = Mlp(width, hidden_features=width//4, out_features=3, drop=dropout)#nn.Linear(width, 3)
         self.offset_mlps = nn.ModuleList([copy.deepcopy(offset_model) for _ in range(num_layers)])
         self.ln_post = nn.LayerNorm(width, device=device, dtype=dtype)
 
@@ -201,6 +201,8 @@ class ShapeAsLatentPerceiver(ShapeAsLatentModule):
                  device: Optional[torch.device],
                  dtype: Optional[torch.dtype],
                  num_latents: int,
+                 dropout: float,
+                 num_decoder_layers_cross_attn: int,
                  point_feats: int = 0,
                  embed_dim: int = 0,
                  num_freqs: int = 8,
@@ -266,6 +268,8 @@ class ShapeAsLatentPerceiver(ShapeAsLatentModule):
             dtype=dtype,
             fourier_embedder=self.fourier_embedder,
             out_channels=3, # for point cloud reconstruction
+            dropout=dropout,
+            num_layers=num_decoder_layers_cross_attn,
             num_latents=num_latents,
             width=width,
             heads=heads,
@@ -351,6 +355,8 @@ class AlignedShapeLatentPerceiver(ShapeAsLatentPerceiver):
                  point_feats: int = 0,
                  embed_dim: int = 0,
                  num_freqs: int = 8,
+                 dropout: float = 0.0,
+                 num_decoder_layers_cross_attn: int = 2,
                  include_pi: bool = True,
                  width: int,
                  heads: int,
@@ -365,6 +371,8 @@ class AlignedShapeLatentPerceiver(ShapeAsLatentPerceiver):
         super().__init__(
             device=device,
             dtype=dtype,
+            dropout=dropout,
+            num_decoder_layers_cross_attn=num_decoder_layers_cross_attn,
             num_latents=1 + num_latents,
             point_feats=point_feats,
             embed_dim=embed_dim,

@@ -1,7 +1,7 @@
 model:
   target: michelangelo.models.tsal.asl_pl_module.AlignedShapeAsLatentPLModule
   params:
-    ckpt_path: "checkpoints/aligned_shape_latents/shapevae-256.ckpt"
+    # ckpt_path: #"checkpoints/aligned_shape_latents/shapevae-256.ckpt"
     shape_module_cfg:
       target: michelangelo.models.tsal.sal_perceiver.AlignedShapeLatentPerceiver
       params:
@@ -22,6 +22,9 @@ model:
       target: michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule
       params:
         clip_model_version: "openai/clip-vit-large-patch14"
+    
+    dropout: 0.1
+    num_decoder_layers_cross_attn: 2
 
     loss_cfg:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar
@@ -37,7 +40,7 @@ model:
         target: torch.optim.AdamW
         params:
           betas: [0.9, 0.99]
-          eps: 1.e-6
+          # eps: 1.e-6
           lr: 1.e-4 #1.e-3
           weight_decay: 1.e-2
 
@@ -53,13 +56,30 @@ model:
         params:
           mode: "min"
           factor: 0.1
-          patience: 10000
-          verbose: true
+          patience: 10
+          # verbose: true
 data:
   data_dir: "~/Documents/datasets/ShapeNetViPC-Dataset"
-  batch_size: 4
   num_workers: 0
   view_align: true
   category: "plane"
   mini: true
-  image_size: 224
+  image_size: 196
+
+
+# training params
+batch_size: 4
+max_epochs: -1
+use_ckpt: false
+use_swa: true
+use_lr_finder: false
+max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
+log_every_n_steps: 50
+accumulate_grad_batches: 4
+gradient_clip_val: 0.5
+check_val_every_n_epoch: 100  # Run validation once per 5 epochs
+fast_dev_run: false
+limit_train_batches: null
+limit_val_batches: null
+overfit_batches: 1 #0.0
+resume_from_ckpt: null
