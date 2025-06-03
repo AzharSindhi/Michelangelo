@@ -1,2 +1,4 @@
-vipc dataloader memory
-no normals
+vipc dataloader memory # training on mini
+lr finder?
+image resize # not possible, implemented clip doesn't support it
+test is slow? find out reason

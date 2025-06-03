@@ -1,7 +1,7 @@
 model:
   target: michelangelo.models.tsal.asl_pl_module.AlignedShapeAsLatentPLModule
   params:
-    # ckpt_path: #"checkpoints/aligned_shape_latents/shapevae-256.ckpt"
+    ckpt_path: "checkpoints/aligned_shape_latents/shapevae-256.ckpt"
     shape_module_cfg:
       target: michelangelo.models.tsal.sal_perceiver.AlignedShapeLatentPerceiver
       params:
@@ -10,10 +10,10 @@ model:
         point_feats: 3   # normal
         num_freqs: 8
         include_pi: false
-        heads: 12
+        heads: 8 #12
         width: 768
-        num_encoder_layers: 8
-        num_decoder_layers: 16
+        num_encoder_layers: 4 #8
+        num_decoder_layers: 8 #16
         use_ln_post: true
         init_scale: 0.25
         qkv_bias: false
@@ -60,7 +60,7 @@ model:
           # verbose: true
 data:
   data_dir: "~/Documents/datasets/ShapeNetViPC-Dataset"
-  num_workers: 0
+  num_workers: 4
   view_align: true
   category: "plane"
   mini: true
@@ -68,18 +68,18 @@ data:
 
 
 # training params
-batch_size: 4
-max_epochs: -1
+batch_size: 8
+max_epochs: 500
 use_ckpt: false
 use_swa: true
 use_lr_finder: false
 max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
-log_every_n_steps: 50
+log_every_n_steps: 100
 accumulate_grad_batches: 4
 gradient_clip_val: 0.5
-check_val_every_n_epoch: 100  # Run validation once per 5 epochs
+check_val_every_n_epoch: 20  # Run validation once per 5 epochs
 fast_dev_run: false
 limit_train_batches: null
 limit_val_batches: null
-overfit_batches: 1 #0.0
+overfit_batches: 0.0 #0.0
 resume_from_ckpt: null

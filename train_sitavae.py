@@ -67,7 +67,7 @@ def set_seed(seed=42):
     cudnn.deterministic = True
     os.environ["PYTHONHASHSEED"] = str(seed)
 
-def train(run_name_prefix=""):
+def train(run_name_prefix="", mlflow_dir="./mlruns"):
     # seed everything
     set_seed(42)
     
@@ -79,7 +79,7 @@ def train(run_name_prefix=""):
 
     # run name based on time and process id and prefix
     run_name = f"{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri="file:./mlruns", run_name=run_name)
+    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri=f"file:{mlflow_dir}", run_name=run_name)
 
     # Initialize model
     ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
@@ -175,7 +175,7 @@ def train(run_name_prefix=""):
         gradient_clip_val=config.gradient_clip_val,
         logger=mlf_logger,
         check_val_every_n_epoch=config.check_val_every_n_epoch,  # Run validation once per 5 epochs
-        # fast_dev_run=True,
+        fast_dev_run=config.fast_dev_run,
         limit_train_batches=config.limit_train_batches,
         limit_val_batches=config.limit_val_batches,
         overfit_batches=config.overfit_batches,
@@ -192,5 +192,6 @@ def train(run_name_prefix=""):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_name", "-r",type=str, required=True)
+    parser.add_argument("--mlflow_dir", "-m",type=str, default="./mlruns")
     args = parser.parse_args()
-    train(args.run_name)
+    train(args.run_name, args.mlflow_dir)

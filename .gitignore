@@ -191,7 +191,7 @@ lightning_logs/
 *.jpg
 *.jpeg
 *.npy
-mlruns/
+mlruns*/
 lightning_logs/
 slurm_logs/
 checkpoints/
