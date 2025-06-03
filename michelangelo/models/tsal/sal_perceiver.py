@@ -15,7 +15,8 @@ from michelangelo.models.modules.transformer_blocks import (
 )
 
 from .tsal_base import ShapeAsLatentModule
-
+from torch.nn import functional as F
+import copy
 
 class CrossAttentionEncoder(nn.Module):
 
@@ -111,6 +112,23 @@ class CrossAttentionEncoder(nn.Module):
 
         return checkpoint(self._forward, (pc, feats), self.parameters(), self.use_checkpoint)
 
+class Mlp(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.ReLU, drop=0.0):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
 
 class CrossAttentionDecoder(nn.Module):
 
@@ -132,28 +150,47 @@ class CrossAttentionDecoder(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.fourier_embedder = fourier_embedder
 
-        self.query_proj = nn.Linear(self.fourier_embedder.out_dim, width, device=device, dtype=dtype)
+        self.query_proj = nn.Linear(self.fourier_embedder.out_dim, width)
 
-        self.cross_attn_decoder = ResidualCrossAttentionBlock(
-            device=device,
-            dtype=dtype,
-            n_data=num_latents,
-            width=width,
-            heads=heads,
-            init_scale=init_scale,
-            qkv_bias=qkv_bias,
-            flash=flash
-        )
-
+        num_layers = 2
+        cross_attn_block = nn.TransformerDecoderLayer(d_model=width, nhead=heads, batch_first=True, dropout=0.0)
+        # cross_attn_block = ResidualCrossAttentionBlock(
+        #     device=device,
+        #     dtype=dtype,
+        #     width=width,
+        #     heads=heads,
+        #     init_scale=init_scale,
+        #     qkv_bias=qkv_bias,
+        #     flash=flash,
+        # )
+        self.cross_attn_decoder = nn.ModuleList([copy.deepcopy(cross_attn_block) for _ in range(num_layers)])
+        offset_model = Mlp(width, hidden_features=width//4, out_features=3)#nn.Linear(width, 3)
+        self.offset_mlps = nn.ModuleList([copy.deepcopy(offset_model) for _ in range(num_layers)])
         self.ln_post = nn.LayerNorm(width, device=device, dtype=dtype)
-        self.output_proj = nn.Linear(width, out_channels, device=device, dtype=dtype)
+
+
 
     def _forward(self, queries: torch.FloatTensor, latents: torch.FloatTensor):
-        queries = self.query_proj(self.fourier_embedder(queries))
-        x = self.cross_attn_decoder(queries, latents)
-        x = self.ln_post(x)
-        x = self.output_proj(x)
-        return x
+        # complete_points = queries
+        complete_points = queries.clone()
+        queries = self.fourier_embedder(queries)
+        queries = self.query_proj(queries)
+        intermediate_completions = []
+        for i, layer in enumerate(self.cross_attn_decoder):
+            # cross attend with incomplete points
+            queries = layer(queries, latents)
+            # queries = self.ln_post(queries)
+            offset = F.hardtanh(self.offset_mlps[i](queries))
+            complete_points = (complete_points + offset) / 2.0
+
+            intermediate_completions.append(complete_points)
+        
+        # queries = torch.cat([queries, incomplete_points], dim=-1)
+        # complete_points = self.offset_model(queries)
+        # complete_points = complete_points.clamp(-1.0, 1.0)
+        complete_points = torch.cat(intermediate_completions, dim=1)
+        # normalize between -1 and 1
+        return complete_points
 
     def forward(self, queries: torch.FloatTensor, latents: torch.FloatTensor):
         return checkpoint(self._forward, (queries, latents), self.parameters(), self.use_checkpoint)
@@ -184,7 +221,6 @@ class ShapeAsLatentPerceiver(ShapeAsLatentModule):
 
         self.num_latents = num_latents
         self.fourier_embedder = FourierEmbedder(num_freqs=num_freqs, include_pi=include_pi)
-
         init_scale = init_scale * math.sqrt(1.0 / width)
         self.encoder = CrossAttentionEncoder(
             device=device,
@@ -229,7 +265,7 @@ class ShapeAsLatentPerceiver(ShapeAsLatentModule):
             device=device,
             dtype=dtype,
             fourier_embedder=self.fourier_embedder,
-            out_channels=1, # for point cloud reconstruction
+            out_channels=3, # for point cloud reconstruction
             num_latents=num_latents,
             width=width,
             heads=heads,
@@ -275,7 +311,7 @@ class ShapeAsLatentPerceiver(ShapeAsLatentModule):
         return self.transformer(latents)
 
     def query_geometry(self, queries: torch.FloatTensor, latents: torch.FloatTensor):
-        logits = self.geo_decoder(queries, latents).squeeze(-1)
+        logits = self.geo_decoder(queries, latents)#.squeeze(-1)
         return logits
 
     def forward(self,

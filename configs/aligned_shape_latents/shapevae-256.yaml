@@ -27,9 +27,9 @@ model:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar
       params:
         contrast_weight: 0.1
-        # chamfer_weight: 0.1
-        # mse_weight: 0.2
-        near_weight: 0.1
+        chamfer_weight: 1.0 #0.1
+        mse_weight: 0.0 #0.2
+        # near_weight: 0.1
         kl_weight: 0.001
 
     optimizer_cfg:
@@ -38,18 +38,26 @@ model:
         params:
           betas: [0.9, 0.99]
           eps: 1.e-6
+          lr: 1.e-4 #1.e-3
           weight_decay: 1.e-2
 
+      # scheduler:
+      #   target: michelangelo.utils.lr_scheduler.LambdaWarmUpCosineFactorScheduler
+      #   params:
+      #     warm_up_steps: 150
+      #     f_start: 1.e-8
+      #     f_min: 1.e-6
+      #     f_max: 1.e-6
       scheduler:
-        target: michelangelo.utils.lr_scheduler.LambdaWarmUpCosineFactorScheduler
+        target: torch.optim.lr_scheduler.ReduceLROnPlateau
         params:
-          warm_up_steps: 5000
-          f_start: 1.e-6
-          f_min: 1.e-3
-          f_max: 1.0
+          mode: "min"
+          factor: 0.1
+          patience: 10000
+          verbose: true
 data:
   data_dir: "~/Documents/datasets/ShapeNetViPC-Dataset"
-  batch_size: 38
+  batch_size: 4
   num_workers: 0
   view_align: true
   category: "plane"

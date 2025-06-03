@@ -1,6 +1,6 @@
 import torch
 import torch.utils.data as data
-from .vipc_dataloader import ViPCDataLoader
+from .vipc_dataloader import ViPCDataLoader, ViPCDataLoaderMemory
 
 
 def get_train_augmentation():
@@ -36,7 +36,7 @@ def get_dataset(
         assert phase in ['val', 'test', 'test_trainset']
         augmentation = False
 
-    dataset = ViPCDataLoader(
+    dataset = ViPCDataLoaderMemory(
         data_dir, phase, view_align=view_align, 
         category=category, mini=mini,
         augmentation=augmentation,

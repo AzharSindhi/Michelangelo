@@ -263,34 +263,215 @@ class ViPCDataLoader(data.Dataset):
         result['name'] = copy.deepcopy(self.key[idx]).replace("/", "_")
 
         result['label'] = np.array(self.labels[idx])
-        result['image'] = views
+        result['image'] = views.astype(np.float32)
         result['text'] = torch.empty(1, 77)
 
         pc, pc_normals = self.fps_open3d(result['surface'])
         pc_part, pc_part_normals = self.fps_open3d(result['incomplete_points'])
-        result['surface'] = torch.cat([pc, pc_normals], dim=-1)
-        result['incomplete_points'] = torch.cat([pc_part, pc_part_normals], dim=-1)
+        result['surface'] = torch.cat([pc, pc_normals], dim=-1).float()
+        result['incomplete_points'] = torch.cat([pc_part, pc_part_normals], dim=-1).float()
 
         return result
 
     def __len__(self):
         return len(self.key)
 
-if __name__ == "__main__":
-    
-    # import to pil_image function from torch transforms
-    from torchvision.transforms.functional import to_pil_image
-    data_dir = os.path.expanduser("~/Documents/datasets/ShapeNetViPC-Dataset")
-    augmentation = {
-            "pc_augm_scale": 1.2,
-            "pc_augm_rot": True,
-            "pc_rot_scale": 90,
-            "pc_augm_mirror_prob": 0.5,
-            "pc_augm_jitter": False,
-            "translation_magnitude": 0.1,
-            "noise_magnitude_for_generated_samples": 0
+
+
+class ViPCDataLoaderMemory(data.Dataset):
+    def __init__(self, data_path, status, pc_input_num=4096, R=1, scale=1, image_size=224, 
+                 augmentation=False, return_augmentation_params=False, debug=False, 
+                 view_align=True, category='plane', mini=True):
+        super(ViPCDataLoaderMemory,self).__init__()
+        self.pc_input_num = pc_input_num
+        self.status = status
+        self.filelist = []
+        self.cat = []
+        self.key = []
+        self.category = category
+        self.view_align = view_align
+        self.cat_map = {
+            'plane':'02691156',
+            'bench': '02828884', 
+            'cabinet':'02933112', 
+            'car':'02958343',
+            'chair':'03001627',
+            'monitor': '03211117',
+            'lamp':'03636649',
+            'speaker': '03691459', 
+            'firearm': '04090263', 
+            'couch':'04256520',
+            'table':'04379243',
+            'cellphone': '04401088', 
+            'watercraft':'04530566'
         }
+        filename = os.path.join(data_path, f"vipc_dataloader_normals_4096_{status}_{category}.npz")
+        with np.load(filename) as data:
+            self.incomplete_points = np.array(data['incomplete_points'])
+            self.surface = np.array(data['surface'])
+            self.key = np.array(data['names'])
+            self.labels = np.array(data['labels'])
+            self.images = np.array(data['images'])
+        
+        self.key = [str(k) for k in self.key]
+
+        if debug:
+            self.key = self.key[:5]
+        elif mini:
+            nsamples = 5000
+            if status == "test":
+                nsamples = int(nsamples * 0.3)
+            self.key = random.sample(self.key, nsamples)
+
+        # self.transform = transforms.Compose([
+        #     transforms.Resize(image_size),
+        #     # transforms.ToTensor(),
+        #     # transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        # ])
+
+        self.train = status == "train"
+        self.augmentation = augmentation  # augmentation could be a dict or False
+        self.return_augmentation_params = return_augmentation_params
+
+        # ---- label ----
+        self.labels = np.full(shape=(len(self.key),), fill_value=R-1, dtype=np.int64)
+        # ---- label ----
+
+        self.scale = scale
+        # self.input_data = self.input_data * scale
+        # self.gt_data = self.gt_data * scale
+
+        print('partial point clouds:', len(self.key))
+        # if not benchmark:
+        print('gt complete point clouds:', len(self.key))
+        print('labels', len(self.labels))
+        self.labels = self.labels.astype(int)
+        self.R = 1
+        self.npoints = self.pc_input_num
+        self.image_size = image_size
+
+    def fps_open3d(self, points: torch.Tensor):
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+        points = torch.from_numpy(np.array(pcd.points))
+        normals = torch.from_numpy(np.array(pcd.normals))
+        
+        return points, normals
+
+    def rotation_z(self, pts, theta):
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        rotation_matrix = np.array([[cos_theta, -sin_theta, 0.0],
+                                    [sin_theta, cos_theta, 0.0],
+                                    [0.0, 0.0, 1.0]])
+        return pts @ rotation_matrix.T
+
+
+    def rotation_y(self, pts, theta):
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        rotation_matrix = np.array([[cos_theta, 0.0, -sin_theta],
+                                    [0.0, 1.0, 0.0],
+                                    [sin_theta, 0.0, cos_theta]])
+        return pts @ rotation_matrix.T
+
+
+    def rotation_x(self, pts, theta):
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+        rotation_matrix = np.array([[1.0, 0.0, 0.0],
+                                    [0.0, cos_theta, -sin_theta],
+                                    [0.0, sin_theta, cos_theta]])
+        return pts @ rotation_matrix.T
+
+    # def prepare_image(self, image_array):
+    
+    #     image_pt = torch.tensor(image).float()
+    #     image_pt = rearrange(image_pt, "h w c -> c h w")
+    
+    #     return image_pt
+
+    def __getitem__(self, idx):
+
+        
+        result = {}
+        result['name'] = copy.deepcopy(self.key[idx]).replace("/", "_")
+
+        result['label'] = np.array(self.labels[idx])
+        result['image'] = self.images[idx].astype(np.float32)
+        result['text'] = torch.empty(1, 77)
+
+        pc, pc_normals = torch.from_numpy(self.surface[idx][:, :3]), torch.from_numpy(self.surface[idx][:, 3:])
+        pc_part, pc_part_normals = torch.from_numpy(self.incomplete_points[idx][:, :3]), torch.from_numpy(self.incomplete_points[idx][:, 3:])
+        result['surface'] = torch.cat([pc, pc_normals], dim=-1).float()
+        result['incomplete_points'] = torch.cat([pc_part, pc_part_normals], dim=-1).float()
+
+        return result
+
+    def __len__(self):
+        return len(self.key)
+
+
+def test_dataset(status="train", category="plane"):
+    data_dir = os.path.expanduser("~/Documents/datasets/ShapeNetViPC-Dataset")
+    from torch.utils.data import DataLoader
+    from tqdm import tqdm
+    dataset = ViPCDataLoaderMemory(
+        data_path=data_dir,
+        status=status,
+        category=category,
+        augmentation=False,
+    )
+    
+    dataloader = DataLoader(dataset, batch_size=30, shuffle=False)
+    for batch in tqdm(dataloader):
+        pass
+        # break
+    
+
+def save_dataset_memory(status="train", category="plane"):
+    from torch.utils.data import DataLoader
+    from tqdm import tqdm
+    data_dir = os.path.expanduser("~/Documents/datasets/ShapeNetViPC-Dataset")
     dataset = ViPCDataLoader(
+        data_path=data_dir,
+        status=status,
+        category=category,
+        augmentation=False,
+    )
+    
+    dataloader = DataLoader(dataset, batch_size=30, shuffle=False)
+    incomplete_points = []
+    surface = []
+    names = []
+    labels = []
+    images = []
+    for batch in tqdm(dataloader):
+        incomplete_points.extend(batch['incomplete_points'].numpy())
+        surface.extend(batch['surface'].numpy())
+        names.extend(batch['name'])
+        labels.extend(batch['label'].numpy())
+        images.extend(batch['image'].numpy())
+        # break
+    
+    incomplete_points = np.array(incomplete_points)
+    surface = np.array(surface)
+    names = np.array(names)
+    labels = np.array(labels)
+    images = np.array(images)
+
+    print(incomplete_points.shape)
+    print(surface.shape)
+    print(names.shape)
+    print(labels.shape)
+    print(images.shape)
+    outpath = os.path.join(data_dir, f"vipc_dataloader_normals_4096_{status}_{category}.npz")
+    np.savez(outpath, incomplete_points=incomplete_points, surface=surface, names=names, labels=labels, images=images)
+
+def save_test_example():
+    data_dir = os.path.expanduser("~/Documents/datasets/ShapeNetViPC-Dataset")
+    dataset = ViPCDataLoaderMemory(
         data_path=data_dir,
         status="train",
         augmentation=False,
@@ -302,20 +483,46 @@ if __name__ == "__main__":
         surface = batch['incomplete_points']
         points = surface[:, :3]
         normals = surface[:, 3:]
+        image = batch["image"]
+        print(image.min(), image.max())
         # save points
         np.savez(outpath, points=points, normals=normals)
         # save original as .xyz excluding normals 
         np.savetxt(outpath.replace(".npz", ".xyz"), batch['surface'][:, :3])
         np.savetxt(outpath.replace(".npz", "_sparse.xyz"), points)
         break
-        # image = batch["image"]
-        # print(image.shape, image.min(), image.max())
-        # # normalize back
-        # image = image.transpose(2, 1, 0)
-        # image = (image * 0.5 + 0.5) * 255
-        # image = image.astype(np.uint8)
-        # print(image.shape, image.min(), image.max())
-        # pil_image = Image.fromarray(image)
-        # pil_image.save("out_pointclouds/epoch_0029/original_dataloader_00.jpg")
-        # np.savez(outpath, points=points, normals=normals)
-        # break
+
+if __name__ == "__main__":
+    
+    # test_dataset(status="train", category="plane")
+    save_test_example()
+    # import to pil_image function from torch transforms
+    # from torchvision.transforms.functional import to_pil_image
+    # data_dir = os.path.expanduser("~/Documents/datasets/ShapeNetViPC-Dataset")
+    # augmentation = {
+    #         "pc_augm_scale": 1.2,
+    #         "pc_augm_rot": True,
+    #         "pc_rot_scale": 90,
+    #         "pc_augm_mirror_prob": 0.5,
+    #         "pc_augm_jitter": False,
+    #         "translation_magnitude": 0.1,
+    #         "noise_magnitude_for_generated_samples": 0
+    #     }
+    # dataset = ViPCDataLoader(
+    #     data_path=data_dir,
+    #     status="train",
+    #     augmentation=False,
+    # )
+    
+    # outpath = "out_pointclouds/epoch_0029/original_dataloader_00.npz"
+    # data = [dataset[10]]
+    # for batch in data:
+    #     surface = batch['incomplete_points']
+    #     points = surface[:, :3]
+    #     normals = surface[:, 3:]
+    #     # save points
+    #     np.savez(outpath, points=points, normals=normals)
+    #     # save original as .xyz excluding normals 
+    #     np.savetxt(outpath.replace(".npz", ".xyz"), batch['surface'][:, :3])
+    #     np.savetxt(outpath.replace(".npz", "_sparse.xyz"), points)
+    #     break

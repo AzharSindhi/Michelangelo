@@ -5,18 +5,21 @@ import numpy as np
 import os.path as osp
 from omegaconf import OmegaConf
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging
 from torch.utils.data import DataLoader, Dataset, random_split
 from typing import Optional, Dict, Any, List, Tuple
 import open3d as o3d
 from PIL import Image
 import matplotlib.pyplot as plt
-
+import random
+from torch.backends import cudnn
 from michelangelo.models.tsal.asl_pl_module import AlignedShapeAsLatentPLModule
 from michelangelo.callbacks.pointcloud_write import PointCloudSaver
 
 from pytorch_lightning.loggers import MLFlowLogger
 from michelangelo.data.dataset import get_dataset
+from tqdm import tqdm
+from pytorch_lightning.tuner import lr_finder
 
 
 class ShapeNetViPCDataModule(pl.LightningDataModule):
@@ -31,20 +34,17 @@ class ShapeNetViPCDataModule(pl.LightningDataModule):
         self.category = category
         self.mini = mini
         self.image_size = image_size
-    
+
     def setup(self, stage: Optional[str] = None):
-        # Split dataset into train/val
         self.train_dataset = get_dataset(self.data_dir, phase="train", view_align=self.view_align, category=self.category, mini=self.mini, image_size=self.image_size)
         self.val_dataset = get_dataset(self.data_dir, phase="test", view_align=self.view_align, category=self.category, mini=self.mini, image_size=self.image_size)
-    
+
     def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             shuffle=True,
-            pin_memory=True,
-            
         )
     
     def val_dataloader(self):
@@ -53,20 +53,32 @@ class ShapeNetViPCDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             shuffle=False,
-            pin_memory=True,
         )
 
 
-def train():
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    cudnn.benchmark = False
+    cudnn.deterministic = True
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+def train(run_name=""):
+    # seed everything
+    set_seed(42)
+    
     # Load config
     config_path = "configs/aligned_shape_latents/shapevae-256.yaml"
     config = OmegaConf.load(config_path)
 
-    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri="file:./mlruns")
+    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri="file:./mlruns", run_name=run_name)
 
     # Initialize model
-    # ignore_keys = ["model.shape_model.encoder.query", "model.shape_model.geo_decoder.output_proj.weight", "model.shape_model.geo_decoder.output_proj.bias"]
-    ignore_keys = []
+    ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
+    # ignore_keys = []
     sita_vae = AlignedShapeAsLatentPLModule(
         device="cuda" if torch.cuda.is_available() else "cpu",
         dtype=torch.float32,
@@ -77,7 +89,14 @@ def train():
         ckpt_path=config.model.params.ckpt_path,
         ignore_keys=ignore_keys
     )
-
+    # everything except the geometry decoder is freezed, set trainable
+    # for name, param in sita_vae.named_parameters():
+    #     if "geo_decoder" not in name:
+    #         param.requires_grad = False
+    #     else:
+    #         print(f"Setting {name} to trainable")
+    #         param.requires_grad = True
+    
     # state_dict = checkpoint['state_dict']
     # model_state_dict = model.state_dict()
 
@@ -98,7 +117,14 @@ def train():
         mini=config.data.mini,
         image_size=config.data.image_size
     )
-
+    # train_dataloader = datamodule.train_dataloader()
+    # val_dataloader = datamodule.val_dataloader()
+    # dataloader sanity check
+    # for batch in tqdm(train_dataloader, desc="Training dataloader sanity check"):
+    #     pass
+    # for batch in tqdm(val_dataloader, desc="Validation dataloader sanity check"):
+    #     pass
+    
     # Callbacks
     checkpoint_callback = ModelCheckpoint(
         monitor='val/total_loss',
@@ -114,21 +140,32 @@ def train():
     # Point cloud saver callback
     pc_saver = PointCloudSaver(
         save_dir='out_pointclouds',
-        max_samples=4,  # Number of samples to save per epoch
-        every_n_epochs=10  # Save every epoch
+        max_samples=2,  # Number of samples to save per epoch
+        every_n_epochs=50  # Save every epoch
     )
-
+    swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
+    max_epochs = -1
     # Initialize trainer
     trainer = pl.Trainer(
-        max_epochs=1000,
+        max_epochs=max_epochs,
         accelerator="gpu",
         devices=1,
-        callbacks=[checkpoint_callback, lr_monitor, pc_saver],
+        callbacks=[lr_monitor, pc_saver],
         enable_model_summary=True,
-        log_every_n_steps=50,
+        log_every_n_steps=1,
+        # accumulate_grad_batches=4,
+        # gradient_clip_val=0.5,
         logger=mlf_logger,
-        check_val_every_n_epoch=5,  # Run validation once per 5 epochs
+        check_val_every_n_epoch=10000,  # Run validation once per 5 epochs
+        # fast_dev_run=True,
+        overfit_batches=1,
     )
+
+    # lr_finder = trainer.tuner.lr_find(sita_vae, max_lr=0.01, datamodule=datamodule, update_attr=True)
+    # fig = lr_finder.plot(suggest=True)
+    # fig.savefig("lr_finder.png")
+    # sita_vae.hparams.lr = lr_finder.suggestion()
+    # print(f"Learning rate set to {sita_vae.hparams.lr}")
 
     # Train the model
     trainer.fit(
@@ -139,4 +176,5 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    run_name = ""
+    train(run_name)

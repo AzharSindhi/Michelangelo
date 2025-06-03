@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from typing import List, Tuple, Dict, Optional
+from collections import defaultdict
 from omegaconf import DictConfig
 
 import torch
@@ -19,7 +20,9 @@ from .tsal_base import (
     Latent2MeshOutput,
     AlignedMeshOutput
 )
-
+import numpy as np
+from einops import repeat
+from torch import nn
 
 class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
@@ -44,11 +47,19 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         self.loss = instantiate_from_config(loss_cfg)
 
         self.optimizer_cfg = optimizer_cfg
-
+        self.learning_rate = optimizer_cfg.optimizer.params.lr
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
 
+        numpoints = 4096
+        self.learnable_volume_queries = torch.nn.Parameter(torch.randn((numpoints, shape_model.width), device=device, dtype=dtype) * 0.02)
+        # query = repeat(self.query, "m c -> b m c", b=bs)
+        self.position_transform = nn.Linear(3, shape_model.width, device=device, dtype=dtype)
+        self.offset_model = nn.Linear(shape_model.width, 3, device=device, dtype=dtype)
         self.save_hyperparameters()
+        # monitor for every key
+        self.log_train_epoch = defaultdict(list)
+        self.log_val_epoch = defaultdict(list)
 
     def set_shape_model_only(self):
         self.model.set_shape_model_only()
@@ -93,12 +104,14 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         else:
             optimizer = instantiate_from_config(self.optimizer_cfg.optimizer, params=trainable_parameters)
             scheduler_func = instantiate_from_config(
-                self.optimizer_cfg.scheduler
+                self.optimizer_cfg.scheduler,
+                optimizer=optimizer,
             )
             scheduler = {
-                "scheduler": lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler_func.schedule),
-                "interval": "step",
-                "frequency": 1
+                "scheduler": scheduler_func, #lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler_func.schedule),
+                "interval": "epoch",
+                "frequency": 1,
+                "monitor": "train/total_loss"
             }
             optimizers = [optimizer]
             schedulers = [scheduler]
@@ -124,12 +137,16 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         """
 
         embed_outputs, shape_z = self.model(surface, image, text)
-
         shape_zq, posterior = self.model.shape_model.encode_kl_embed(shape_z)
         latents = self.model.shape_model.decode(shape_zq)
-        logits = self.model.shape_model.query_geometry(volume_queries, latents)
-
-        return embed_outputs, logits, posterior
+        
+        # add position embedding
+        # volume_queries_learnable = volume_queries_learnable + self.position_transform(volume_queries)
+        # incomplete_points = volume_queries.clone()
+        recon_pc = self.model.shape_model.query_geometry(volume_queries, latents)
+        # recon_pc = recon_pc + incomplete_points
+        # recon_pc = recon_pc.clamp(-1.0, 1.0)
+        return embed_outputs, recon_pc, posterior
 
     def encode(self, surface: torch.FloatTensor, sample_posterior=True):
 
@@ -178,20 +195,20 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         text = batch["text"]
 
         volume_queries = batch["incomplete_points"][..., 0:3] #batch["geo_points"][..., 0:3]
-        shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1]) #batch["geo_points"][..., -1]
+        # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1]) #batch["geo_points"][..., -1]
 
-        embed_outputs, shape_logits, posteriors = self(surface, image, text, volume_queries)
+        embed_outputs, reconstructed_pc, posteriors = self(surface, image, text, volume_queries)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
-            shape_logits=shape_logits,
-            shape_labels=shape_labels,
+            reconstructed_pc=reconstructed_pc,
+            gt_pc=surface[..., :3],
             split="train"
         )
 
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=shape_logits.shape[0],
-                      sync_dist=False, rank_zero_only=True)
+        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
+                      sync_dist=False, rank_zero_only=True, on_step=False, on_epoch=True)
 
         return aeloss
 
@@ -202,22 +219,22 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         text = batch["text"]
 
         volume_queries = batch["incomplete_points"][..., 0:3]  #batch["geo_points"][..., 0:3]
-        shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
+        # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
 
-        embed_outputs, shape_logits, posteriors = self(surface, image, text, volume_queries)
+        embed_outputs, reconstructed_pc, posteriors = self(surface, image, text, volume_queries)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
-            shape_logits=shape_logits,
-            shape_labels=shape_labels,
+            reconstructed_pc=reconstructed_pc,
+            gt_pc=surface[..., :3],
             split="val"
         )
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=shape_logits.shape[0],
-                      sync_dist=False, rank_zero_only=True)
+        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
+                      sync_dist=False, rank_zero_only=True, on_step=False, on_epoch=True)
 
         return aeloss
-
+    
     def visual_alignment(self,
                          surface: torch.FloatTensor,
                          image: torch.FloatTensor,
