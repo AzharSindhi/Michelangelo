@@ -4,7 +4,7 @@ from .vipc_dataloader import ViPCDataLoader, ViPCDataLoaderMemory
 
 
 def get_train_augmentation():
-    return False # works better without augmentation
+    # return False # works better without augmentation
     return {
             "pc_augm_scale": 1.2,
             "pc_augm_rot": True,

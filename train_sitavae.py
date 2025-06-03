@@ -20,7 +20,7 @@ from pytorch_lightning.loggers import MLFlowLogger
 from michelangelo.data.dataset import get_dataset
 from tqdm import tqdm
 from pytorch_lightning.tuner import lr_finder
-
+import time
 
 class ShapeNetViPCDataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int = 4, num_workers: int = 4,
@@ -66,14 +66,18 @@ def set_seed(seed=42):
     cudnn.deterministic = True
     os.environ["PYTHONHASHSEED"] = str(seed)
 
-def train(run_name=""):
+def train(run_name_prefix=""):
     # seed everything
     set_seed(42)
     
     # Load config
     config_path = "configs/aligned_shape_latents/shapevae-256.yaml"
     config = OmegaConf.load(config_path)
+    if config.overfit_batches > 0:
+        config.model.dropout = 0.0
 
+    # run name based on time and process id and prefix
+    run_name = f"{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
     mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri="file:./mlruns", run_name=run_name)
 
     # Initialize model
@@ -86,7 +90,7 @@ def train(run_name=""):
         aligned_module_cfg=config.model.params.aligned_module_cfg,
         loss_cfg=config.model.params.loss_cfg,
         optimizer_cfg=config.model.params.optimizer_cfg,
-        ckpt_path=config.model.params.ckpt_path,
+        ckpt_path=config.model.params.ckpt_path if config.use_ckpt else None,
         ignore_keys=ignore_keys
     )
     # everything except the geometry decoder is freezed, set trainable
@@ -110,7 +114,7 @@ def train(run_name=""):
     # Setup data
     datamodule = ShapeNetViPCDataModule(
         data_dir=config.data.data_dir,
-        batch_size=config.data.batch_size,
+        batch_size=config.batch_size,
         num_workers=config.data.num_workers,
         view_align=config.data.view_align,
         category=config.data.category,
@@ -126,10 +130,12 @@ def train(run_name=""):
     #     pass
     
     # Callbacks
+    # mlflow run id
+    dirpath = f"checkpoints_runs/{run_name_prefix}_{mlf_logger.run_id}"
     checkpoint_callback = ModelCheckpoint(
         monitor='val/total_loss',
-        dirpath='checkpoints_runs/',
-        filename='sita_vae-{epoch:02d}-{val_total_loss:.2f}',
+        dirpath=dirpath,
+        filename='sita_vae-best',
         save_top_k=1,
         save_last=True,
         mode='min',
@@ -141,31 +147,38 @@ def train(run_name=""):
     pc_saver = PointCloudSaver(
         save_dir='out_pointclouds',
         max_samples=2,  # Number of samples to save per epoch
-        every_n_epochs=50  # Save every epoch
+        every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
     )
-    swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
-    max_epochs = -1
+    
+    callbacks = [lr_monitor, pc_saver, checkpoint_callback]
+    if config.use_swa:
+        swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
+        callbacks.append(swa_callback)
+    
+    if config.use_lr_finder:
+        lr_finder = trainer.tuner.lr_find(sita_vae, max_lr=config.max_lr, datamodule=datamodule, update_attr=False)
+        fig = lr_finder.plot(suggest=True)
+        fig.savefig("lr_finder.png")
+        sita_vae.hparams.lr = lr_finder.suggestion()
+        print(f"Learning rate set to {sita_vae.hparams.lr}")
+    
     # Initialize trainer
     trainer = pl.Trainer(
-        max_epochs=max_epochs,
+        max_epochs=config.max_epochs,
         accelerator="gpu",
         devices=1,
-        callbacks=[lr_monitor, pc_saver],
+        callbacks=callbacks,
         enable_model_summary=True,
-        log_every_n_steps=1,
-        # accumulate_grad_batches=4,
-        # gradient_clip_val=0.5,
+        log_every_n_steps=config.log_every_n_steps,
+        accumulate_grad_batches=config.accumulate_grad_batches,
+        gradient_clip_val=config.gradient_clip_val,
         logger=mlf_logger,
-        check_val_every_n_epoch=10000,  # Run validation once per 5 epochs
+        check_val_every_n_epoch=config.check_val_every_n_epoch,  # Run validation once per 5 epochs
         # fast_dev_run=True,
-        overfit_batches=1,
+        limit_train_batches=config.limit_train_batches,
+        limit_val_batches=config.limit_val_batches,
+        overfit_batches=config.overfit_batches,
     )
-
-    # lr_finder = trainer.tuner.lr_find(sita_vae, max_lr=0.01, datamodule=datamodule, update_attr=True)
-    # fig = lr_finder.plot(suggest=True)
-    # fig.savefig("lr_finder.png")
-    # sita_vae.hparams.lr = lr_finder.suggestion()
-    # print(f"Learning rate set to {sita_vae.hparams.lr}")
 
     # Train the model
     trainer.fit(
@@ -176,5 +189,5 @@ def train(run_name=""):
 
 
 if __name__ == "__main__":
-    run_name = ""
+    run_name = "scratch"
     train(run_name)

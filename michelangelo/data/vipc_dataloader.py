@@ -402,10 +402,13 @@ class ViPCDataLoaderMemory(data.Dataset):
         result['image'] = self.images[idx].astype(np.float32)
         result['text'] = torch.empty(1, 77)
 
-        pc, pc_normals = torch.from_numpy(self.surface[idx][:, :3]), torch.from_numpy(self.surface[idx][:, 3:])
-        pc_part, pc_part_normals = torch.from_numpy(self.incomplete_points[idx][:, :3]), torch.from_numpy(self.incomplete_points[idx][:, 3:])
-        result['surface'] = torch.cat([pc, pc_normals], dim=-1).float()
-        result['incomplete_points'] = torch.cat([pc_part, pc_part_normals], dim=-1).float()
+        # pc, pc_normals = torch.from_numpy(self.surface[idx][:, :3]), torch.from_numpy(self.surface[idx][:, 3:])
+        # pc_part, pc_part_normals = torch.from_numpy(self.incomplete_points[idx][:, :3]), torch.from_numpy(self.incomplete_points[idx][:, 3:])
+        pc = torch.from_numpy(self.surface[idx][:, :3])
+        pc_part = torch.from_numpy(self.incomplete_points[idx][:, :3])
+        result['surface'] = torch.cat([pc, pc_part], dim=-1).float()
+
+        result['incomplete_points'] = torch.cat([pc_part, pc_part], dim=-1).float()
 
         return result
 
