@@ -189,5 +189,7 @@ def train(run_name_prefix=""):
 
 
 if __name__ == "__main__":
-    run_name = "scratch"
-    train(run_name)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run_name", "-r",type=str, required=True)
+    args = parser.parse_args()
+    train(args.run_name)
