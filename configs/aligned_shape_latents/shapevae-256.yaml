@@ -64,7 +64,7 @@ data:
   view_align: true
   category: "plane"
   mini: true
-  image_size: 196
+  image_size: 224
 
 
 # training params

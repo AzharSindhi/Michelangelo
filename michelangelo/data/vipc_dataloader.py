@@ -392,6 +392,18 @@ class ViPCDataLoaderMemory(data.Dataset):
     
     #     return image_pt
 
+    def resize_image(self, chw_image:np.ndarray):
+        whc_image = chw_image.transpose(2, 1, 0)
+        whc_image  = (whc_image + 1.0) * 255
+        whc_image = (whc_image / 2.0).astype(np.uint8)
+        whc_image = Image.fromarray(whc_image)
+        whc_image = whc_image.resize((self.image_size, self.image_size))
+        whc_image.save("test.jpg")
+        whc_image = np.array(whc_image)
+        whc_image = (whc_image / 255) * 2 - 1
+        chw_image = whc_image.transpose(2, 1, 0)
+        return chw_image
+
     def __getitem__(self, idx):
 
         
@@ -399,7 +411,10 @@ class ViPCDataLoaderMemory(data.Dataset):
         result['name'] = copy.deepcopy(self.key[idx]).replace("/", "_")
 
         result['label'] = np.array(self.labels[idx])
-        result['image'] = self.images[idx].astype(np.float32)
+
+        # chw_image= self.images[idx].astype(np.float32)
+        # resized_img = self.resize_image(chw_image)
+        result['image'] = self.images[idx]
         result['text'] = torch.empty(1, 77)
 
         # pc, pc_normals = torch.from_numpy(self.surface[idx][:, :3]), torch.from_numpy(self.surface[idx][:, 3:])

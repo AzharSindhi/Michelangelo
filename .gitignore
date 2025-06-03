@@ -198,3 +198,4 @@ checkpoints/
 checkpoints_runs/
 output_pointclouds/
 out_pointclouds/
+.vscode/
