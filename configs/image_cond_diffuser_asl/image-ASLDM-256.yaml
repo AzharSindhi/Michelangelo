@@ -59,7 +59,7 @@ model:
 
     scheduler_cfg:
       guidance_scale: 7.5
-      num_inference_steps: 100
+      num_inference_steps: 50
       eta: 0.0
 
       noise:
