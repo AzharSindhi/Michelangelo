@@ -45,6 +45,7 @@ class ClipASLDiffuser(pl.LightningModule):
                  loss_cfg,
                  first_stage_key: str = "surface",
                  cond_stage_key: str = "image",
+                 incomplete_points_key: str = "incomplete_points",
                  scale_by_std: bool = False,
                  z_scale_factor: float = 1.0,
                  ckpt_path: Optional[str] = None,
@@ -56,6 +57,7 @@ class ClipASLDiffuser(pl.LightningModule):
         self.learning_rate = learning_rate
         self.first_stage_key = first_stage_key
         self.cond_stage_key = cond_stage_key
+        self.incomplete_points_key = incomplete_points_key
 
         # 1. lazy initialize first stage
         self.instantiate_first_stage(first_stage_config)
@@ -76,6 +78,12 @@ class ClipASLDiffuser(pl.LightningModule):
         self.noise_scheduler: DDPMScheduler = instantiate_from_config(scheduler_cfg.noise)
         self.denoise_scheduler: SchedulerType = instantiate_from_config(scheduler_cfg.denoise)
 
+        self.numpoints = self.first_stage_model.numpoints
+
+        image_embedding_dim = self.cond_stage_model.embedding_dim
+        shape_embedding_dim = first_stage_config.params.shape_module_cfg.params.embed_dim
+
+        self.condition_transform = nn.Linear(image_embedding_dim + shape_embedding_dim, image_embedding_dim)
         # 5. loss configures
         self.loss_cfg = loss_cfg
 
@@ -165,10 +173,10 @@ class ClipASLDiffuser(pl.LightningModule):
         return z_q
 
     @torch.no_grad()
-    def decode_first_stage(self, z_q: torch.FloatTensor, **kwargs):
+    def decode_first_stage(self, z_q: torch.FloatTensor, volume_queries: torch.FloatTensor, **kwargs):
 
         z_q = 1. / self.z_scale_factor * z_q
-        latents = self.first_stage_model.decode(z_q, **kwargs)
+        latents = self.first_stage_model.decode(z_q, volume_queries=volume_queries, **kwargs)
         return latents
 
     @rank_zero_only
@@ -242,8 +250,14 @@ class ClipASLDiffuser(pl.LightningModule):
         """
 
         latents = self.encode_first_stage(batch[self.first_stage_key])
-        conditions = self.cond_stage_model.encode(batch[self.cond_stage_key])
-
+        image_features = self.cond_stage_model.encode(batch[self.cond_stage_key])
+        partial_latents = self.encode_first_stage(batch["incomplete_points"])
+        # to match the shape of conditions
+        partial_last = partial_latents[:, -1:, :]
+        partial_latents = torch.cat([partial_latents, partial_last], dim=1)
+        # TO-DO: explore different conditionings
+        conditions = torch.cat([image_features, partial_latents], dim=-1)
+        conditions = self.condition_transform(conditions)
         # Sample noise that we"ll add to the latents
         # [batch_size, n_token, latent_dim]
         noise = torch.randn_like(latents)
@@ -342,10 +356,18 @@ class ClipASLDiffuser(pl.LightningModule):
 
         # conditional encode
         xc = batch[self.cond_stage_key]
+        xp = batch[self.incomplete_points_key] #TO-DO: set key to config
 
         # print(self.first_stage_model.device, self.cond_stage_model.device, self.device)
 
         cond = self.cond_stage_model(xc)
+        cond_pc = self.encode_first_stage(xp)
+        expand_tensor = cond_pc[:, -1:, :]
+        shape_cond = torch.cat([cond_pc, expand_tensor], dim=1)
+        cond = torch.cat([cond, shape_cond], dim=-1)
+        cond = self.condition_transform(cond)
+
+        volume_queries = xp[:, :,  :3]
 
         if do_classifier_free_guidance:
             un_cond = self.cond_stage_model.unconditional_embedding(batch_size=len(xc))
@@ -370,7 +392,7 @@ class ClipASLDiffuser(pl.LightningModule):
                 )
                 for sample, t in sample_loop:
                     latents = sample
-                outputs.append(self.decode_first_stage(latents, **kwargs))
+                outputs.append(self.decode_first_stage(latents, volume_queries, **kwargs))
         else:
 
             sample_loop = ddim_sample(
@@ -391,7 +413,7 @@ class ClipASLDiffuser(pl.LightningModule):
             for sample, t in sample_loop:
                 latents = sample
                 if i % iter_size == 0 or i == steps - 1:
-                    outputs.append(self.decode_first_stage(latents, **kwargs))
+                    outputs.append(self.decode_first_stage(latents, volume_queries, **kwargs))
                 i += 1
 
         return outputs

@@ -303,6 +303,7 @@ class FrozenCLIPImageGridEmbedder(AbstractEncoder):
             version="openai/clip-vit-large-patch14",
             device="cuda",
             zero_embedding_radio=0.1,
+            image_size=224,
     ):
         super().__init__()
 
@@ -321,8 +322,8 @@ class FrozenCLIPImageGridEmbedder(AbstractEncoder):
 
         self.transform = transforms.Compose(
             [
-                transforms.Resize(224, transforms.InterpolationMode.BILINEAR, antialias=True),
-                transforms.CenterCrop(224),  # crop a (224, 224) square
+                transforms.Resize(image_size, transforms.InterpolationMode.BILINEAR, antialias=True),
+                transforms.CenterCrop(image_size),  # crop a (224, 224) square
                 transforms.Normalize(
                     mean=[0.48145466, 0.4578275, 0.40821073],
                     std=[0.26862954, 0.26130258, 0.27577711],

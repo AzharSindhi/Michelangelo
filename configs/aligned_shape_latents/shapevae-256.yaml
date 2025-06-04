@@ -25,6 +25,7 @@ model:
     
     dropout: 0.1
     num_decoder_layers_cross_attn: 2
+    numpoints: 4096
 
     loss_cfg:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar

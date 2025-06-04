@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import random
 from torch.backends import cudnn
 from michelangelo.models.tsal.asl_pl_module import AlignedShapeAsLatentPLModule
-from michelangelo.callbacks.pointcloud_write import PointCloudSaver
+from michelangelo.callbacks.pointcloud_diff_sample import PointCloudSampler
 
 from pytorch_lightning.loggers import MLFlowLogger
 from michelangelo.data.dataset import get_dataset
@@ -74,45 +74,15 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
     set_seed(42)
     
     # Load config
-    config_path = "configs/aligned_shape_latents/shapevae-256.yaml"
+    config_path = "configs/image_cond_diffuser_asl/image-ASLDM-256.yaml"
     config = OmegaConf.load(config_path)
-    if config.overfit_batches > 0:
-        config.model.dropout = 0.0
 
     # run name based on time and process id and prefix
-    run_name = f"{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri=f"file:{mlflow_dir}", run_name=run_name)
+    run_name = f"diff_{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
+    mlf_logger = MLFlowLogger(experiment_name="diffusion_logs", tracking_uri=f"file:{mlflow_dir}", run_name=run_name)
 
     # Initialize model
-    ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
-    # ignore_keys = []
-    sita_vae = AlignedShapeAsLatentPLModule(
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        dtype=torch.float32,
-        shape_module_cfg=config.model.params.shape_module_cfg,
-        aligned_module_cfg=config.model.params.aligned_module_cfg,
-        loss_cfg=config.model.params.loss_cfg,
-        optimizer_cfg=config.model.params.optimizer_cfg,
-        ckpt_path=config.model.params.ckpt_path if config.use_ckpt else None,
-        ignore_keys=ignore_keys
-    )
-    # everything except the geometry decoder is freezed, set trainable
-    # for name, param in sita_vae.named_parameters():
-    #     if "geo_decoder" not in name:
-    #         param.requires_grad = False
-    #     else:
-    #         print(f"Setting {name} to trainable")
-    #         param.requires_grad = True
-    
-    # state_dict = checkpoint['state_dict']
-    # model_state_dict = model.state_dict()
-
-    # # Only load matching shapes
-    # for k in model_state_dict:
-    #     if k in state_dict and state_dict[k].shape == model_state_dict[k].shape:
-    #         model_state_dict[k] = state_dict[k]
-
-    # model.load_state_dict(model_state_dict)
+    clip_diffuser = ClipASLDiffuser(**config.model.params)
 
     # Setup data
     datamodule = ShapeNetViPCDataModule(
@@ -124,21 +94,12 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
         mini=config.data.mini,
         image_size=config.data.image_size
     )
-    # train_dataloader = datamodule.train_dataloader()
-    # val_dataloader = datamodule.val_dataloader()
-    # dataloader sanity check
-    # for batch in tqdm(train_dataloader, desc="Training dataloader sanity check"):
-    #     pass
-    # for batch in tqdm(val_dataloader, desc="Validation dataloader sanity check"):
-    #     pass
-    
-    # Callbacks
-    # mlflow run id
-    dirpath = f"checkpoints_runs/{run_name_prefix}_{mlf_logger.run_id}"
+
+    dirpath = f"diffusion_checkpoints/{run_name_prefix}_{mlf_logger.run_id}"
     checkpoint_callback = ModelCheckpoint(
         monitor='val/total_loss',
         dirpath=dirpath,
-        filename='sita_vae-best',
+        filename='clip_diffuser-best',
         save_top_k=1,
         save_last=True,
         mode='min',
@@ -146,24 +107,24 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
     
     lr_monitor = LearningRateMonitor(logging_interval='step')
     
-    # Point cloud saver callback
-    pc_saver = PointCloudSaver(
-        save_dir='out_pointclouds',
-        max_samples=2,  # Number of samples to save per epoch
+    # Point cloud sampler callback
+    pc_sampler = PointCloudSampler(
+        save_dir='out_sampled_pcs',
+        max_samples=4,  # Number of samples to save per epoch
         every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
     )
     
-    callbacks = [lr_monitor, pc_saver, checkpoint_callback]
+    callbacks = [lr_monitor, checkpoint_callback, pc_sampler]
     if config.use_swa:
         swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
         callbacks.append(swa_callback)
     
     if config.use_lr_finder:
-        lr_finder = trainer.tuner.lr_find(sita_vae, max_lr=config.max_lr, datamodule=datamodule, update_attr=False)
+        lr_finder = trainer.tuner.lr_find(clip_diffuser, max_lr=config.max_lr, datamodule=datamodule, update_attr=False)
         fig = lr_finder.plot(suggest=True)
         fig.savefig("lr_finder.png")
-        sita_vae.hparams.lr = lr_finder.suggestion()
-        print(f"Learning rate set to {sita_vae.hparams.lr}")
+        clip_diffuser.hparams.lr = lr_finder.suggestion()
+        print(f"Learning rate set to {clip_diffuser.hparams.lr}")
     
     # Initialize trainer
     trainer = pl.Trainer(
@@ -185,7 +146,7 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
 
     # Train the model
     trainer.fit(
-        model=sita_vae,
+        model=clip_diffuser,
         datamodule=datamodule,
         # ckpt_path="path/to/checkpoint.ckpt"  # Uncomment to resume training
     )
@@ -196,4 +157,5 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", "-r",type=str, required=True)
     parser.add_argument("--mlflow_dir", "-m",type=str, default="./mlruns")
     args = parser.parse_args()
+    args.run_name = args.run_name + "_diff"
     train(args.run_name, args.mlflow_dir)

@@ -3,14 +3,16 @@ import os
 import torch
 import numpy as np
 import os.path as osp
+import point_cloud_utils as pcu
+from tqdm import tqdm
 
-class PointCloudSaver(Callback):
+class PointCloudSampler(Callback):
     """
-    Callback to save original and reconstructed point clouds as .xyz files after each epoch.
+    Callback to sample original and reconstructed point clouds after each epoch.
     """
     def __init__(
         self,
-        save_dir: str = "pointclouds",
+        save_dir: str = "points_sampled",
         max_samples: int = 2,
         every_n_epochs: int = 1,
     ):
@@ -41,6 +43,12 @@ class PointCloudSaver(Callback):
             return
         # pl_module.eval()
         self.save_batch(batch, pl_module, "train", trainer.current_epoch)
+        # train_chamfer_distance, train_hausdorff_distance = self.calculate_metrics(pl_module, trainer.train_dataloader)
+        # # log to logger
+        # trainer.logger.log_metrics({
+        #     "train_cd": train_chamfer_distance,
+        #     "train_hd": train_hausdorff_distance,
+        # }, step=trainer.current_epoch)
         # pl_module.train()
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx) -> None:
@@ -48,6 +56,13 @@ class PointCloudSaver(Callback):
             return
         # pl_module.eval()
         self.save_batch(batch, pl_module, "test", trainer.current_epoch)
+        test_chamfer_distance, test_hausdorff_distance = self.calculate_metrics(pl_module, trainer.val_dataloaders[dataloader_idx])
+        # log to logger
+        trainer.logger.log_metrics({
+            "test_cd": test_chamfer_distance,
+            "test_hd": test_hausdorff_distance,
+        }, step=trainer.current_epoch)
+        # pl_module.train()
 
     def save_batch(self, batch, pl_module, name, current_epoch):
 
@@ -64,16 +79,16 @@ class PointCloudSaver(Callback):
         
         # Get model predictions
         with torch.no_grad():
-            incomplete_points = batch["incomplete_points"][..., :3]
-            surface = batch["surface"]
-            image = batch["image"]
-            text = batch["text"]
-            outputs = pl_module.forward(surface, image, text, incomplete_points)
+            # incomplete_points = batch["incomplete_points"][..., :3]
+            # surface = batch["surface"]
+            # image = batch["image"]
+            # text = batch["text"]
+            outputs = pl_module.sample(batch)[-1]
         
         # Get original and reconstructed point clouds
-        original_pcs = surface[..., :3].cpu().numpy()  # [B, N, 3]
-        reconstructed_pcs = outputs[1][:, -pl_module.numpoints:, :].cpu().numpy()  # [B, N, 3]
-        incomplete_points = incomplete_points.cpu().numpy()
+        original_pcs = batch["surface"][..., :3].cpu().numpy()  # [B, N, 3]
+        reconstructed_pcs = outputs[:, -pl_module.numpoints:, :].cpu().numpy()  # [B, N, 3]
+        incomplete_points = batch["incomplete_points"][..., :3].cpu().numpy()
         
         # Create directory for this epoch
         epoch_dir = osp.join(self.save_dir, name)#, f"epoch_{current_epoch:04d}")
@@ -91,7 +106,7 @@ class PointCloudSaver(Callback):
             )
             self._save_xyz(
                 reconstructed_pcs[i], 
-                osp.join(epoch_dir, f"rec_{sample_names[i]}_{i:02d}.xyz")
+                osp.join(epoch_dir, f"sampled_{sample_names[i]}_{i:02d}.xyz")
             )
             self._save_xyz(
                 incomplete_points[i], 
@@ -120,6 +135,40 @@ class PointCloudSaver(Callback):
             #     reconstructed_pcs[i],
             #     osp.join(epoch_dir, f"comparison_{i:02d}.ply")
             # )
+    def move_to_device(self, batch, device):
+        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
+                for k, v in batch.items()}
+        return batch
+    
+    def calculate_batch_chamfer(self, original_pcs, reconstructed_pcs):
+        chamfer_distance = 0
+        for ori, rec in zip(original_pcs, reconstructed_pcs):
+            cd = pcu.chamfer_distance(rec, ori) + pcu.chamfer_distance(ori, rec)
+            chamfer_distance += cd.item()
+        return chamfer_distance / len(original_pcs)
+    
+    def calculate_batch_hausdorff(self, original_pcs, reconstructed_pcs):
+        hausdorff_distance = 0
+        for ori, rec in zip(original_pcs, reconstructed_pcs):
+            hd = pcu.hausdorff_distance(rec, ori) + pcu.hausdorff_distance(ori, rec)
+            hausdorff_distance += hd.item()
+        return hausdorff_distance / len(original_pcs)
+    
+    def calculate_metrics(self, pl_module, dataloader):
+        chamfer_distance = 0
+        hausdorff_distance = 0
+        for batch in tqdm(dataloader, desc="Calculating metrics"):
+            batch = self.move_to_device(batch, pl_module.device)
+            with torch.no_grad():
+                outputs = pl_module.sample(batch)[-1]
+            original_pcs = batch["surface"][..., :3].cpu().numpy()
+            reconstructed_pcs = outputs[:, -pl_module.numpoints:, :].cpu().numpy()
+            chamfer_distance += self.calculate_batch_chamfer(original_pcs, reconstructed_pcs)
+            # hausdorff_distance += self.calculate_batch_hausdorff(original_pcs, reconstructed_pcs)
+        
+        chamfer_distance /= len(dataloader)
+        # hausdorff_distance /= len(dataloader)
+        return chamfer_distance, hausdorff_distance
     
     def _save_ply_with_colors(self, original: np.ndarray, reconstructed: np.ndarray, filename: str):
         """Save both point clouds as a single PLY file with different colors."""

@@ -33,7 +33,8 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                  optimizer_cfg: Optional[DictConfig] = None,
                  ckpt_path: Optional[str] = None,
                  ignore_keys: Union[Tuple[str], List[str]] = (),
-                 device="cuda", dtype=torch.float32):
+                 device="cuda", dtype=torch.float32,
+                 numpoints: int = 4096):
 
         super().__init__()
 
@@ -45,23 +46,23 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         )
 
         self.loss = instantiate_from_config(loss_cfg)
-
-        self.optimizer_cfg = optimizer_cfg
-        self.learning_rate = optimizer_cfg.optimizer.params.lr
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         else:
             print("No checkpoint provided, learning from scratch")
         
-        numpoints = 4096
+        if optimizer_cfg is not None:
+            self.optimizer_cfg = optimizer_cfg
+            self.learning_rate = optimizer_cfg.optimizer.params.lr
+        else:
+            self.learning_rate = 1.e-4
+        
+        self.numpoints = numpoints
         self.learnable_volume_queries = torch.nn.Parameter(torch.randn((numpoints, shape_model.width), device=device, dtype=dtype) * 0.02)
         # query = repeat(self.query, "m c -> b m c", b=bs)
         self.position_transform = nn.Linear(3, shape_model.width, device=device, dtype=dtype)
         self.offset_model = nn.Linear(shape_model.width, 3, device=device, dtype=dtype)
         self.save_hyperparameters()
-        # monitor for every key
-        self.log_train_epoch = defaultdict(list)
-        self.log_val_epoch = defaultdict(list)
 
     def set_shape_model_only(self):
         self.model.set_shape_model_only()
@@ -93,6 +94,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         print(f"Restored from {path} with {len(missing)} missing and {len(unexpected)} unexpected keys")
         if len(missing) > 0:
             print(f"Missing Keys: {missing}")
+        if len(unexpected) > 0:
             print(f"Unexpected Keys: {unexpected}")
 
     def configure_optimizers(self) -> Tuple[List, List]:
@@ -101,7 +103,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         trainable_parameters = list(self.model.parameters())
 
         if self.optimizer_cfg is None:
-            optimizers = [torch.optim.AdamW(trainable_parameters, lr=1e-3, betas=(0.9, 0.99), weight_decay=1e-3)]
+            optimizers = [torch.optim.AdamW(trainable_parameters, lr=self.learning_rate, betas=(0.9, 0.99), weight_decay=1e-3)]
             schedulers = []
         else:
             optimizer = instantiate_from_config(self.optimizer_cfg.optimizer, params=trainable_parameters)
@@ -163,14 +165,17 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
     def decode(self,
                z_q,
-               bounds: Union[Tuple[float], List[float], float] = 1.1,
-               octree_depth: int = 7,
-               num_chunks: int = 10000) -> List[Latent2MeshOutput]:
+               volume_queries: torch.FloatTensor,
+            #    bounds: Union[Tuple[float], List[float], float] = 1.1,
+            #    octree_depth: int = 7,
+            #    num_chunks: int = 10000
+               ):
+        
+        # generate point cloud from latent (decoder)
 
         latents = self.model.shape_model.decode(z_q)  # latents: [bs, num_latents, dim]
-        outputs = self.latent2mesh(latents, bounds=bounds, octree_depth=octree_depth, num_chunks=num_chunks)
-
-        return outputs
+        recon_pc = self.model.shape_model.query_geometry(volume_queries, latents)
+        return recon_pc
 
     def training_step(self, batch: Dict[str, torch.FloatTensor],
                       batch_idx: int, optimizer_idx: int = 0) -> torch.FloatTensor:

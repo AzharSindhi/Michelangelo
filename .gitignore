@@ -198,4 +198,6 @@ checkpoints/
 checkpoints_runs/
 output_pointclouds/
 out_pointclouds/
+out_sampled_pcs/
+diffusion_checkpoints/
 .vscode/
