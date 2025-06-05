@@ -91,12 +91,11 @@ model:
           weight_decay: 1.e-2
 
       scheduler:
-        target: michelangelo.utils.trainings.lr_scheduler.LambdaWarmUpCosineFactorScheduler
+        target: torch.optim.lr_scheduler.CosineAnnealingLR
         params:
-          warm_up_steps: 5000
-          f_start: 1.e-6
-          f_min: 1.e-3
-          f_max: 1.0
+          T_max: 500
+          eta_min: 0.0
+          last_epoch: -1
 
     loss_cfg:
       loss_type: "mse"
@@ -115,8 +114,8 @@ batch_size: 24
 max_epochs: 500
 use_ckpt: false
 use_swa: true
-use_lr_finder: false
-max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
+use_lr_finder: true
+max_lr: 1.e-6 # if lr_finder is true, this will be used as max_lr
 log_every_n_steps: 100
 accumulate_grad_batches: 4
 gradient_clip_val: 0.5

@@ -119,13 +119,6 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
         swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
         callbacks.append(swa_callback)
     
-    if config.use_lr_finder:
-        lr_finder = trainer.tuner.lr_find(clip_diffuser, max_lr=config.max_lr, datamodule=datamodule, update_attr=False)
-        fig = lr_finder.plot(suggest=True)
-        fig.savefig("lr_finder.png")
-        clip_diffuser.hparams.lr = lr_finder.suggestion()
-        print(f"Learning rate set to {clip_diffuser.hparams.lr}")
-    
     # Initialize trainer
     trainer = pl.Trainer(
         max_epochs=config.max_epochs,
@@ -143,6 +136,13 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
         limit_val_batches=config.limit_val_batches,
         overfit_batches=config.overfit_batches,
     )
+
+    if config.use_lr_finder:
+        lr_finder = trainer.tuner.lr_find(clip_diffuser, max_lr=config.max_lr, datamodule=datamodule, update_attr=False)
+        fig = lr_finder.plot(suggest=True)
+        fig.savefig("lr_finder.png")
+        clip_diffuser.hparams.lr = lr_finder.suggestion()
+        print(f"Learning rate set to {clip_diffuser.hparams.lr}")
 
     # Train the model
     trainer.fit(

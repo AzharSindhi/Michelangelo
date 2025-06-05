@@ -151,16 +151,17 @@ class ClipASLDiffuser(pl.LightningModule):
         # Initialize scheduler if configured
         schedulers = []
         if hasattr(self, 'optimizer_cfg') and hasattr(self.optimizer_cfg, 'scheduler'):
-            scheduler_cfg = self.optimizer_cfg.scheduler
-            if hasattr(scheduler_cfg, 'params'):
-                scheduler = LambdaWarmUpCosineFactorScheduler(**scheduler_cfg.params)
-                scheduler.trainer = self.trainer  # Pass trainer reference for max_steps
-                scheduler_config = {
-                    'scheduler': torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler.schedule),
-                    'interval': 'step',
-                    'frequency': 1
-                }
-                schedulers = [scheduler_config]
+            scheduler_func = instantiate_from_config(
+                self.optimizer_cfg.scheduler,
+                optimizer=optimizer,
+            )
+            scheduler = {
+                "scheduler": scheduler_func,
+                "interval": "epoch",
+                "frequency": 1,
+                "monitor": "train/total_loss"
+            }
+            schedulers = [scheduler]
         
         return [optimizer], schedulers
 
