@@ -139,7 +139,6 @@ class ClipASLDiffuser(pl.LightningModule):
         return zero_rank
 
     def configure_optimizers(self) -> Tuple[List, List]:
-        lr = self.learning_rate
         trainable_parameters = list(self.model.parameters())
         
         # Initialize optimizer

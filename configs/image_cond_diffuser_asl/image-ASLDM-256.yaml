@@ -87,6 +87,7 @@ model:
         target: torch.optim.AdamW
         params:
           betas: [0.9, 0.99]
+          lr: 1.e-6
           eps: 1.e-6
           weight_decay: 1.e-2
 
