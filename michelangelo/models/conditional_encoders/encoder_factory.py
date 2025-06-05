@@ -8,7 +8,8 @@ from transformers import CLIPModel, CLIPTokenizer
 from collections import OrderedDict
 
 from michelangelo.data.transforms import RandomResize
-
+from transformers import AutoImageProcessor, AutoModel
+import torchvision.transforms.functional as F
 
 class AbstractEncoder(nn.Module):
     embedding_dim: int
@@ -561,3 +562,39 @@ class MoECLIPImageEncoder(nn.Module):
     def encode(self, image):
         self.move()
         return self(image, zero_embedding_radio=self.zero_embedding_radio)
+
+
+class DinoImageEmbedder(nn.Module):
+    def __init__(self, device="cuda", version="facebook/dinov2-large", zero_embedding_radio=0.0, image_size=224):
+        super().__init__()
+        self.device = device
+        self.processor = AutoImageProcessor.from_pretrained(version)
+        self.model = AutoModel.from_pretrained(version)
+        self.patch_size = self.model.config.patch_size
+        self.zero_embedding_radio = zero_embedding_radio
+        self.image_size = image_size
+
+    def to_pil_image(self, chw_image:torch.Tensor):
+        chw_image = (chw_image + 1.0) * 255
+        chw_image = (chw_image / 2.0).to(torch.uint8)
+        pil_image = F.to_pil_image(chw_image).convert("RGB")
+        return pil_image
+
+    def encode(self, x):
+        inputs = [self.to_pil_image(img) for img in x]
+        processed_inputs = self.processor(inputs, return_tensors="pt").pixel_values.to(x.device)
+        features = self.model(processed_inputs)
+        return features.last_hidden_state
+    
+    # def unconditional_embedding(self, batch_size):
+    #     zero = torch.zeros(
+    #         batch_size,
+    #         self.model.embeddings.num_positions,
+    #         self.model.config.hidden_size,
+    #         device=self.device,
+    #         dtype=self.model.visual_projection.weight.dtype,
+    #     )
+    #     return zero
+    
+    def forward(self, x):
+        return self.encode(x)

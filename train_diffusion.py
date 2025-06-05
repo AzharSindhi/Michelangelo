@@ -79,7 +79,7 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
 
     # run name based on time and process id and prefix
     run_name = f"diff_{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name="diffusion_logs", tracking_uri=f"file:{mlflow_dir}", run_name=run_name)
+    mlf_logger = MLFlowLogger(experiment_name="diffusion_dino_logs", tracking_uri=f"file:{mlflow_dir}", run_name=run_name)
 
     # Initialize model
     clip_diffuser = ClipASLDiffuser(**config.model.params)
@@ -157,5 +157,5 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", "-r",type=str, required=True)
     parser.add_argument("--mlflow_dir", "-m",type=str, default="./mlruns")
     args = parser.parse_args()
-    args.run_name = args.run_name + "_diff"
+    args.run_name = args.run_name + "_diff_dino"
     train(args.run_name, args.mlflow_dir)

@@ -32,9 +32,9 @@ model:
           target: torch.nn.Identity
 
     cond_stage_config:
-      target: michelangelo.models.conditional_encoders.encoder_factory.FrozenCLIPImageGridEmbedder
+      target: michelangelo.models.conditional_encoders.encoder_factory.DinoImageEmbedder
       params:
-        version: "openai/clip-vit-large-patch14"
+        version: "facebook/dinov2-large"
         zero_embedding_radio: 0.1
         image_size: 224
 
@@ -116,11 +116,11 @@ max_epochs: 500
 use_ckpt: false
 use_swa: true
 use_lr_finder: true
-max_lr: 1.e-6 # if lr_finder is true, this will be used as max_lr
+max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
 log_every_n_steps: 100
 accumulate_grad_batches: 4
 gradient_clip_val: 0.5
-check_val_every_n_epoch: 50  # Run validation once per 5 epochs
+check_val_every_n_epoch: 30  # Run validation once per 5 epochs
 fast_dev_run: false
 limit_train_batches: null
 limit_val_batches: null

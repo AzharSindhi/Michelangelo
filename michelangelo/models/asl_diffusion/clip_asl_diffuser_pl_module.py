@@ -80,10 +80,15 @@ class ClipASLDiffuser(pl.LightningModule):
 
         self.numpoints = self.first_stage_model.numpoints
 
-        image_embedding_dim = self.cond_stage_model.embedding_dim
+        image_embedding_dim = self.cond_stage_model.model.config.hidden_size
         shape_embedding_dim = first_stage_config.params.shape_module_cfg.params.embed_dim
 
-        self.condition_transform = nn.Linear(image_embedding_dim + shape_embedding_dim, image_embedding_dim)
+        self.cross_attn = nn.MultiheadAttention(shape_embedding_dim, kdim=image_embedding_dim,
+                                                vdim=image_embedding_dim,
+                                                num_heads=4,
+                                                batch_first=True)
+        
+        self.proj_condition = nn.Linear(shape_embedding_dim, image_embedding_dim)
         # 5. loss configures
         self.loss_cfg = loss_cfg
 
@@ -250,14 +255,13 @@ class ClipASLDiffuser(pl.LightningModule):
         """
 
         latents = self.encode_first_stage(batch[self.first_stage_key])
-        image_features = self.cond_stage_model.encode(batch[self.cond_stage_key])
-        partial_latents = self.encode_first_stage(batch["incomplete_points"])
-        # to match the shape of conditions
-        partial_last = partial_latents[:, -1:, :]
-        partial_latents = torch.cat([partial_latents, partial_last], dim=1)
-        # TO-DO: explore different conditionings
-        conditions = torch.cat([image_features, partial_latents], dim=-1)
-        conditions = self.condition_transform(conditions)
+        image_features = self.cond_stage_model.encode(batch[self.cond_stage_key]) #[bs, 257, 1024]
+        conditions = self.encode_first_stage(batch["incomplete_points"]) #[bs, 256, 64]
+
+        # cross attent image features with partial latents
+        conditions, _ = self.cross_attn(conditions, image_features, image_features)
+        conditions = self.proj_condition(conditions)
+
         # Sample noise that we"ll add to the latents
         # [batch_size, n_token, latent_dim]
         noise = torch.randn_like(latents)
@@ -360,17 +364,15 @@ class ClipASLDiffuser(pl.LightningModule):
 
         # print(self.first_stage_model.device, self.cond_stage_model.device, self.device)
 
-        cond = self.cond_stage_model(xc)
-        cond_pc = self.encode_first_stage(xp)
-        expand_tensor = cond_pc[:, -1:, :]
-        shape_cond = torch.cat([cond_pc, expand_tensor], dim=1)
-        cond = torch.cat([cond, shape_cond], dim=-1)
-        cond = self.condition_transform(cond)
+        image_features = self.cond_stage_model(xc)
+        cond = self.encode_first_stage(xp)
+        cond, _ = self.cross_attn(cond, image_features, image_features)
+        cond = self.proj_condition(cond)
 
         volume_queries = xp[:, :,  :3]
 
         if do_classifier_free_guidance:
-            un_cond = self.cond_stage_model.unconditional_embedding(batch_size=len(xc))
+            un_cond = torch.zeros_like(cond)#self.cond_stage_model.unconditional_embedding(batch_size=len(xc))
             cond = torch.cat([un_cond, cond], dim=0)
 
         outputs = []
