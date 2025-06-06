@@ -81,7 +81,7 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
 
     # run name based on time and process id and prefix
     run_name = f"{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri=f"file:{mlflow_dir}", run_name=run_name)
+    mlf_logger = MLFlowLogger(experiment_name="sita_vae", tracking_uri=f"file:{mlflow_dir}", run_name=run_name)
 
     # Initialize model
     ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
@@ -148,7 +148,7 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
     
     # Point cloud saver callback
     pc_saver = PointCloudSaver(
-        save_dir='out_pointclouds',
+        save_dir=f"out_pointclouds/{run_name_prefix}_{mlf_logger.run_id}",
         max_samples=2,  # Number of samples to save per epoch
         every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
     )
@@ -157,13 +157,6 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
     if config.use_swa:
         swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
         callbacks.append(swa_callback)
-    
-    if config.use_lr_finder:
-        lr_finder = trainer.tuner.lr_find(sita_vae, max_lr=config.max_lr, datamodule=datamodule, update_attr=False)
-        fig = lr_finder.plot(suggest=True)
-        fig.savefig("lr_finder.png")
-        sita_vae.hparams.lr = lr_finder.suggestion()
-        print(f"Learning rate set to {sita_vae.hparams.lr}")
     
     # Initialize trainer
     trainer = pl.Trainer(
@@ -183,6 +176,13 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
         overfit_batches=config.overfit_batches,
     )
 
+    if config.use_lr_finder:
+        lr_finder = trainer.tuner.lr_find(sita_vae, max_lr=config.max_lr, datamodule=datamodule, update_attr=False)
+        fig = lr_finder.plot(suggest=True)
+        fig.savefig("lr_finder.png")
+        sita_vae.hparams.lr = lr_finder.suggestion()
+        print(f"Learning rate set to {sita_vae.hparams.lr}")
+
     # Train the model
     trainer.fit(
         model=sita_vae,
@@ -196,4 +196,5 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", "-r",type=str, required=True)
     parser.add_argument("--mlflow_dir", "-m",type=str, default="./mlruns")
     args = parser.parse_args()
+    args.run_name = args.run_name + "_dino"
     train(args.run_name, args.mlflow_dir)

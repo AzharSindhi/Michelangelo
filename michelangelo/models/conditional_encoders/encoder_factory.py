@@ -570,9 +570,14 @@ class DinoImageEmbedder(nn.Module):
         self.device = device
         self.processor = AutoImageProcessor.from_pretrained(version)
         self.model = AutoModel.from_pretrained(version)
+        self.model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+        
         self.patch_size = self.model.config.patch_size
         self.zero_embedding_radio = zero_embedding_radio
         self.image_size = image_size
+        self.logit_scale = 1.0
 
     def to_pil_image(self, chw_image:torch.Tensor):
         chw_image = (chw_image + 1.0) * 255
@@ -583,7 +588,8 @@ class DinoImageEmbedder(nn.Module):
     def encode(self, x):
         inputs = [self.to_pil_image(img) for img in x]
         processed_inputs = self.processor(inputs, return_tensors="pt").pixel_values.to(x.device)
-        features = self.model(processed_inputs)
+        with torch.no_grad():
+            features = self.model(processed_inputs)
         return features.last_hidden_state
     
     # def unconditional_embedding(self, batch_size):

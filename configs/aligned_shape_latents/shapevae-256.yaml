@@ -19,9 +19,9 @@ model:
         qkv_bias: false
         use_checkpoint: true
     aligned_module_cfg:
-      target: michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule
+      target: michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule
       params:
-        clip_model_version: "openai/clip-vit-large-patch14"
+        clip_model_version: "facebook/dinov2-large"
     
     dropout: 0.1
     num_decoder_layers_cross_attn: 2
@@ -30,7 +30,7 @@ model:
     loss_cfg:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar
       params:
-        contrast_weight: 0.1
+        contrast_weight: 0.0 #0.1
         chamfer_weight: 1.0 #0.1
         mse_weight: 0.0 #0.2
         # near_weight: 0.1
@@ -45,23 +45,15 @@ model:
           lr: 1.e-4 #1.e-3
           weight_decay: 1.e-2
 
-      # scheduler:
-      #   target: michelangelo.utils.lr_scheduler.LambdaWarmUpCosineFactorScheduler
-      #   params:
-      #     warm_up_steps: 150
-      #     f_start: 1.e-8
-      #     f_min: 1.e-6
-      #     f_max: 1.e-6
       scheduler:
-        target: torch.optim.lr_scheduler.ReduceLROnPlateau
+        target: torch.optim.lr_scheduler.CosineAnnealingLR
         params:
-          mode: "min"
-          factor: 0.1
-          patience: 10
-          # verbose: true
+          T_max: 500
+          eta_min: 0.0
+          last_epoch: -1
 data:
   data_dir: "~/Documents/datasets/ShapeNetViPC-Dataset"
-  num_workers: 4
+  num_workers: 2
   view_align: true
   category: "plane"
   mini: true
@@ -69,18 +61,18 @@ data:
 
 
 # training params
-batch_size: 8
+batch_size: 32
 max_epochs: 500
 use_ckpt: false
 use_swa: true
-use_lr_finder: false
+use_lr_finder: true
 max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
 log_every_n_steps: 100
 accumulate_grad_batches: 4
 gradient_clip_val: 0.5
-check_val_every_n_epoch: 20  # Run validation once per 5 epochs
+check_val_every_n_epoch: 30  # Run validation once per 5 epochs
 fast_dev_run: false
 limit_train_batches: null
 limit_val_batches: null
-overfit_batches: 0.0 #0.0
+overfit_batches: 0.0
 resume_from_ckpt: null

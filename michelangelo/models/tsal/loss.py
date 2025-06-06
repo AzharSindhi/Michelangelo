@@ -265,37 +265,37 @@ class ContrastKLNearFar(nn.Module):
             self.last_local_batch_size = local_batch_size
 
         # normalized features
-        shape_embed = F.normalize(shape_embed, dim=-1, p=2)
-        if text_embed is not None:
-            text_embed = F.normalize(text_embed, dim=-1, p=2)
+        # shape_embed = F.normalize(shape_embed, dim=-1, p=2)
+        # if text_embed is not None:
+        #     text_embed = F.normalize(text_embed, dim=-1, p=2)
         
-        image_embed = F.normalize(image_embed, dim=-1, p=2)
+        # image_embed = F.normalize(image_embed, dim=-1, p=2)
 
-        # gather features from all GPUs
-        if text_embed is not None:
-            shape_embed_all, text_embed_all, image_embed_all = misc.all_gather_batch(
-                [shape_embed, text_embed, image_embed]
-            )
-        else:
-            shape_embed_all, image_embed_all = misc.all_gather_batch(
-                [shape_embed, image_embed]
-            )
+        # # gather features from all GPUs
+        # if text_embed is not None:
+        #     shape_embed_all, text_embed_all, image_embed_all = misc.all_gather_batch(
+        #         [shape_embed, text_embed, image_embed]
+        #     )
+        # else:
+        #     shape_embed_all, image_embed_all = misc.all_gather_batch(
+        #         [shape_embed, image_embed]
+        #     )
 
-        logits_per_shape_image = logit_scale * shape_embed @ image_embed_all.t()
-        logits_per_image_shape = logit_scale * image_embed @ shape_embed_all.t()
+        # logits_per_shape_image = logit_scale * shape_embed @ image_embed_all.t()
+        # logits_per_image_shape = logit_scale * image_embed @ shape_embed_all.t()
 
-        # cosine similarity as logits
-        text_contrastive_loss = 0
-        if text_embed is not None:
-            logits_per_shape_text = logit_scale * shape_embed @ text_embed_all.t()
-            logits_per_text_shape = logit_scale * text_embed @ shape_embed_all.t()
-            text_contrastive_loss = (F.cross_entropy(logits_per_shape_text, self.labels) +
-                         F.cross_entropy(logits_per_text_shape, self.labels)) / 2
+        # # cosine similarity as logits
+        # text_contrastive_loss = 0
+        # if text_embed is not None:
+        #     logits_per_shape_text = logit_scale * shape_embed @ text_embed_all.t()
+        #     logits_per_text_shape = logit_scale * text_embed @ shape_embed_all.t()
+        #     text_contrastive_loss = (F.cross_entropy(logits_per_shape_text, self.labels) +
+        #                  F.cross_entropy(logits_per_text_shape, self.labels)) / 2
 
         
-        contrast_loss =  text_contrastive_loss + (F.cross_entropy(logits_per_shape_image, self.labels) +
-                         F.cross_entropy(logits_per_image_shape, self.labels)) / 2
-
+        # contrast_loss =  text_contrastive_loss + (F.cross_entropy(logits_per_shape_image, self.labels) +
+        #                  F.cross_entropy(logits_per_image_shape, self.labels)) / 2
+        contrast_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
         if gt_pc.shape[-1] > 3:
             gt_pc = gt_pc[..., :3]
         
@@ -314,7 +314,7 @@ class ContrastKLNearFar(nn.Module):
             kl_loss = posteriors.kl(dims=(1, 2))
             kl_loss = torch.mean(kl_loss)
 
-        loss = reconst_loss + kl_loss * self.kl_weight + contrast_loss * self.contrast_weight
+        loss = reconst_loss + kl_loss * self.kl_weight #+ contrast_loss * self.contrast_weight
 
         # compute accuracy
         with torch.no_grad():
@@ -322,9 +322,9 @@ class ContrastKLNearFar(nn.Module):
             # correct = pred.eq(self.labels).sum()
             # shape_text_acc = 100 * correct / local_batch_size
 
-            pred = torch.argmax(logits_per_shape_image, dim=-1)
-            correct = pred.eq(self.labels).sum()
-            shape_image_acc = 100 * correct / local_batch_size
+            # pred = torch.argmax(logits_per_shape_image, dim=-1)
+            # correct = pred.eq(self.labels).sum()
+            # shape_image_acc = 100 * correct / local_batch_size
 
             # preds = shape_logits >= 0
             # accuracy = (preds == shape_labels).float()
@@ -335,7 +335,7 @@ class ContrastKLNearFar(nn.Module):
                 "{}/contrast".format(split): contrast_loss.clone().detach(),
                 "{}/kl".format(split): kl_loss.detach(),
                 # "{}/shape_text_acc".format(split): shape_text_acc,
-                "{}/shape_image_acc".format(split): shape_image_acc,
+                # "{}/shape_image_acc".format(split): shape_image_acc,
                 "{}/reconst_loss".format(split): reconst_loss.detach(),
             }
 

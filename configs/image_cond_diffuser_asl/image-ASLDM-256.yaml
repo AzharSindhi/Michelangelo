@@ -87,7 +87,7 @@ model:
         target: torch.optim.AdamW
         params:
           betas: [0.9, 0.99]
-          lr: 1.e-6
+          lr: 4.e-6
           eps: 1.e-6
           weight_decay: 1.e-2
 
@@ -115,7 +115,7 @@ batch_size: 24
 max_epochs: 500
 use_ckpt: false
 use_swa: true
-use_lr_finder: true
+use_lr_finder: false
 max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
 log_every_n_steps: 100
 accumulate_grad_batches: 4
