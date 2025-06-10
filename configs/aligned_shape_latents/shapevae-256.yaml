@@ -61,7 +61,9 @@ data:
 
 
 # training params
-batch_size: 32
+batch_size: 64
+strategy: ddp_find_unused_parameters_false
+devices: -1
 max_epochs: 500
 use_ckpt: false
 use_swa: true

@@ -4,7 +4,7 @@ model:
     first_stage_config:
       target: michelangelo.models.tsal.asl_pl_module.AlignedShapeAsLatentPLModule
       params:
-        ckpt_path: "checkpoints_runs/scratch_mini_hpc_09eae673e8654ad8a963189458d718d1/last.ckpt" #"checkpoints/aligned_shape_latents/shapevae-256.ckpt"
+        ckpt_path: "checkpoints_runs/vae_nocontrast_dino_20250608-0024_d94dbf748d754c0e849c4621086fa69f/sita_vae-best.ckpt"
         shape_module_cfg:
           target: michelangelo.models.tsal.sal_perceiver.AlignedShapeLatentPerceiver
           params:
@@ -37,6 +37,13 @@ model:
         version: "facebook/dinov2-large"
         zero_embedding_radio: 0.1
         image_size: 224
+
+    # cond_stage_config:
+    #   target: michelangelo.models.conditional_encoders.encoder_factory.FrozenCLIPImageGridEmbedder
+    #   params:
+    #     version: "openai/clip-vit-large-patch14"
+    #     zero_embedding_radio: 0.1
+    #     image_size: 224
 
     first_stage_key: "surface"
     cond_stage_key: "image"
@@ -88,7 +95,7 @@ model:
         params:
           betas: [0.9, 0.99]
           lr: 4.e-6
-          eps: 1.e-6
+          eps: 1.e-4
           weight_decay: 1.e-2
 
       scheduler:
@@ -111,13 +118,15 @@ data:
 
 
 # training params
-batch_size: 24
+batch_size: 48
 max_epochs: 500
+strategy: ddp_find_unused_parameters_false
+devices: -1
 use_ckpt: false
-use_swa: true
+use_swa: false
 use_lr_finder: false
 max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
-log_every_n_steps: 100
+log_every_n_steps: 10
 accumulate_grad_batches: 4
 gradient_clip_val: 0.5
 check_val_every_n_epoch: 30  # Run validation once per 5 epochs
