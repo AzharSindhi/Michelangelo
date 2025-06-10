@@ -80,7 +80,7 @@ class ClipASLDiffuser(pl.LightningModule):
 
         self.numpoints = self.first_stage_model.numpoints
 
-        image_embedding_dim = self.cond_stage_model.model.config.hidden_size
+        image_embedding_dim = 1024 #self.cond_stage_model.model.config.hidden_size
         shape_embedding_dim = first_stage_config.params.shape_module_cfg.params.embed_dim
 
         self.cross_attn = nn.MultiheadAttention(shape_embedding_dim, kdim=image_embedding_dim,
@@ -312,7 +312,7 @@ class ClipASLDiffuser(pl.LightningModule):
         diffusion_outputs = self(batch)
 
         loss, loss_dict = self.compute_loss(diffusion_outputs, "train")
-        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=False, rank_zero_only=True)
+        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=True)
 
         return loss
 
@@ -338,10 +338,17 @@ class ClipASLDiffuser(pl.LightningModule):
         diffusion_outputs = self(batch)
 
         loss, loss_dict = self.compute_loss(diffusion_outputs, "val")
-        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=False, rank_zero_only=True)
+        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=True)
 
         return loss
+    
+    def predict_step(self, batch, batch_idx, dataloader_idx = 0):
+        diffusion_outputs = self(batch)
 
+        loss, loss_dict = self.compute_loss(diffusion_outputs, "predict")
+        # self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=True)
+        return loss
+    
     @torch.no_grad()
     def sample(self,
                batch: Dict[str, Union[torch.FloatTensor, List[str]]],

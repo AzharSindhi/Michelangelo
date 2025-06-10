@@ -28,6 +28,8 @@ class PointCloudSampler(Callback):
         self.every_n_epochs = every_n_epochs
         os.makedirs(os.path.join(save_dir, "train"), exist_ok=True)
         os.makedirs(os.path.join(save_dir, "test"), exist_ok=True)
+        self.cd_all_test = 0
+        self.hd_all_test = 0
     
     def _save_xyz(self, points: np.ndarray, filename: str):
         """Save point cloud as .xyz file."""
@@ -63,6 +65,13 @@ class PointCloudSampler(Callback):
             "test_hd": test_hausdorff_distance,
         }, step=trainer.current_epoch)
         # pl_module.train()
+
+    def on_predict_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+        self.save_batch(batch, pl_module, "predict", trainer.current_epoch)
+        test_chamfer_distance, test_hausdorff_distance = self.calculate_metrics(pl_module, trainer.predict_dataloaders[dataloader_idx])
+        # log to logger
+        self.cd_all_test += test_chamfer_distance
+        self.hd_all_test += test_hausdorff_distance
 
     def save_batch(self, batch, pl_module, name, current_epoch):
 

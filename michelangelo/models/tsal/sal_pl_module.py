@@ -180,8 +180,7 @@ class ShapeAsLatentPLModule(pl.LightningModule):
             prog_bar=True,
             logger=True,
             batch_size=pred_points.shape[0],
-            sync_dist=False,
-            rank_zero_only=True
+            sync_dist=True,
         )
         
         return loss
@@ -223,8 +222,7 @@ class ShapeAsLatentPLModule(pl.LightningModule):
             prog_bar=True,
             logger=True,
             batch_size=pred_points.shape[0],
-            sync_dist=False,
-            rank_zero_only=True
+            sync_dist=True,
         )
         
         return loss

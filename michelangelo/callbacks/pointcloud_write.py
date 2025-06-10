@@ -48,6 +48,9 @@ class PointCloudSaver(Callback):
             return
         # pl_module.eval()
         self.save_batch(batch, pl_module, "test", trainer.current_epoch)
+    
+    def on_predict_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+        self.save_batch(batch, pl_module, "predict", trainer.current_epoch)
 
     def save_batch(self, batch, pl_module, name, current_epoch):
 

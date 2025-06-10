@@ -372,7 +372,7 @@ class ASLDiffuser(pl.LightningModule):
         diffusion_outputs = self(batch)
 
         loss, loss_dict = self.compute_loss(diffusion_outputs, "train")
-        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=False, rank_zero_only=True)
+        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=True)
 
         return loss
 
@@ -398,7 +398,7 @@ class ASLDiffuser(pl.LightningModule):
         diffusion_outputs = self(batch)
 
         loss, loss_dict = self.compute_loss(diffusion_outputs, "val")
-        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=False, rank_zero_only=True)
+        self.log_dict(loss_dict, prog_bar=True, logger=True, sync_dist=True)
 
         return loss
 

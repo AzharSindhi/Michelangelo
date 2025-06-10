@@ -58,10 +58,6 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             self.learning_rate = 1.e-4
         
         self.numpoints = numpoints
-        self.learnable_volume_queries = torch.nn.Parameter(torch.randn((numpoints, shape_model.width), device=device, dtype=dtype) * 0.02)
-        # query = repeat(self.query, "m c -> b m c", b=bs)
-        self.position_transform = nn.Linear(3, shape_model.width, device=device, dtype=dtype)
-        self.offset_model = nn.Linear(shape_model.width, 3, device=device, dtype=dtype)
         self.save_hyperparameters()
 
     def set_shape_model_only(self):
@@ -215,7 +211,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         )
 
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
-                      sync_dist=False, rank_zero_only=True, on_step=False, on_epoch=True)
+                      sync_dist=True, on_step=False, on_epoch=True)
 
         return aeloss
 
@@ -238,7 +234,29 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             split="val"
         )
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
-                      sync_dist=False, rank_zero_only=True, on_step=False, on_epoch=True)
+                      sync_dist=True, on_step=False, on_epoch=True)
+
+        return aeloss
+    
+    def predict_step(self, batch, batch_idx, dataloader_idx = 0):
+        surface = batch["surface"]
+        image = batch["image"]
+        text = batch["text"]
+
+        volume_queries = batch["incomplete_points"][..., 0:3]  #batch["geo_points"][..., 0:3]
+        # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
+
+        embed_outputs, reconstructed_pc, posteriors = self(surface, image, text, volume_queries)
+
+        aeloss, log_dict_ae = self.loss(
+            **embed_outputs,
+            posteriors=posteriors,
+            reconstructed_pc=reconstructed_pc,
+            gt_pc=surface[..., :3],
+            split="val"
+        )
+        # self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
+        #               sync_dist=True, on_step=False, on_epoch=True)
 
         return aeloss
     

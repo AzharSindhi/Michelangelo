@@ -208,7 +208,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         )
 
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
-                      sync_dist=False, rank_zero_only=True)
+                      sync_dist=True)
 
         return aeloss
 
@@ -229,7 +229,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             split="val"
         )
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
-                      sync_dist=False, rank_zero_only=True)
+                      sync_dist=True)
 
         return aeloss
 
