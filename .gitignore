@@ -201,3 +201,4 @@ out_pointclouds/
 out_sampled_pcs/
 diffusion_checkpoints/
 .vscode/
+.lr_find*.ckpt

@@ -22,6 +22,7 @@ from tqdm import tqdm
 from pytorch_lightning.tuner import lr_finder
 import time
 import argparse
+from mlflow_git import log_git_details
 
 
 class ShapeNetViPCDataModule(pl.LightningDataModule):
@@ -70,7 +71,7 @@ def set_seed(seed=42):
     cudnn.deterministic = True
     os.environ["PYTHONHASHSEED"] = str(seed)
 
-def train(run_name_prefix="", exp_name="sitavae"):
+def train(run_name_prefix="", experiment_name="sitavae"):
     # seed everything
     set_seed(42)
     
@@ -82,13 +83,15 @@ def train(run_name_prefix="", exp_name="sitavae"):
 
     # run name based on time and process id and prefix
     run_name = f"{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name=exp_name, run_name=run_name)
+    mlf_logger = MLFlowLogger(experiment_name=experiment_name, run_name=run_name)
+    log_git_details(mlf_logger)
+    # return 
     print(f"INFO: Run name: {run_name}, run_id: {mlf_logger.run_id}")
     # Initialize model
     ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
     # ignore_keys = []
     sita_vae = AlignedShapeAsLatentPLModule(
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        device=config.device,
         dtype=torch.float32,
         shape_module_cfg=config.model.params.shape_module_cfg,
         aligned_module_cfg=config.model.params.aligned_module_cfg,
@@ -198,7 +201,7 @@ def train(run_name_prefix="", exp_name="sitavae"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_name", "-r",type=str, required=True)
-    parser.add_argument("--mlflow_dir", "-m",type=str, default="./mlruns")
+    parser.add_argument("--experiment_name", "-e",type=str, default="sita_vae_dino")
     args = parser.parse_args()
     args.run_name = args.run_name + "_dino"
-    train(args.run_name, args.mlflow_dir)
+    train(args.run_name, args.experiment_name)

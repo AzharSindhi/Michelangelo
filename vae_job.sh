@@ -8,4 +8,4 @@
 
 
 conda activate michelo2
-python train_sitavae.py -r scratch_mini_hpc -m ./mlruns_hpc/mlruns
+python train_sitavae.py -r scratch_mini_hpc -m ./mlruns_hpc/mlrunss

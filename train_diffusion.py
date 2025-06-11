@@ -5,7 +5,7 @@ import numpy as np
 import os.path as osp
 from omegaconf import OmegaConf
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging, BatchSizeFinder
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging, LambdaCallback
 from torch.utils.data import DataLoader, Dataset, random_split
 from typing import Optional, Dict, Any, List, Tuple
 import open3d as o3d
@@ -69,17 +69,20 @@ def set_seed(seed=42):
     cudnn.deterministic = True
     os.environ["PYTHONHASHSEED"] = str(seed)
 
-def train(run_name_prefix="", mlflow_dir="./mlruns"):
+def train(args):
     # seed everything
     set_seed(42)
     
     # Load config
     config_path = "configs/image_cond_diffuser_asl/image-ASLDM-256.yaml"
     config = OmegaConf.load(config_path)
-
+    if args.use_clip_cond:
+        config.model.params.cond_stage_config = config.clip_cond_stage_config
+    else:
+        config.model.params.cond_stage_config = config.dino_cond_stage_config
     # run name based on time and process id and prefix
-    run_name = f"diff_{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name="diffusion_dino", run_name=run_name)
+    run_name = f"diff_{args.run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
+    mlf_logger = MLFlowLogger(experiment_name=args.experiment_name, run_name=run_name)
     print(f"INFO: Run name: {run_name}")
     # Initialize model
     clip_diffuser = ClipASLDiffuser(**config.model.params)
@@ -105,7 +108,8 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
         save_last=True,
         mode='min',
     )
-    
+    # for logging git commits
+    git_log_callback = GitInfoLogCallback()
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
     vis_dir = f'out_sampled_pcs/{run_name_prefix}_{mlf_logger.run_id}'
     print(f"INFO: visualization directory:{vis_dir}")
@@ -116,7 +120,7 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
         every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
     )
     # bs_finder = BatchSizeFinder(mode='binsearch', init_val=config.batch_size)
-    callbacks = [lr_monitor, checkpoint_callback, pc_sampler]
+    callbacks = [lr_monitor, git_log_callback, checkpoint_callback, pc_sampler]
     if config.use_swa:
         swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
         callbacks.append(swa_callback)
@@ -158,7 +162,12 @@ def train(run_name_prefix="", mlflow_dir="./mlruns"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_name", "-r",type=str, required=True)
-    parser.add_argument("--mlflow_dir", "-m",type=str, default="./mlruns")
+    parser.add_argument("--experiment_name", "-e",type=str, default="diffusion_dino")
+    parser.add_argument("--use_clip_cond", type=bool, action="store_true")
     args = parser.parse_args()
     args.run_name = args.run_name + "_diff"
-    train(args.run_name, args.mlflow_dir)
+    if args.use_clip_cond:
+        args.run_name += "_clip"
+    else:
+        args.run_name += "_dino"
+    train(args)
