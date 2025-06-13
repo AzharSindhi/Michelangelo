@@ -2,9 +2,6 @@
 
 import torch
 from torch import nn
-from einops import rearrange
-from transformers import CLIPModel
-
 from michelangelo.models.tsal.tsal_base import AlignedShapeAsLatentModule
 from michelangelo.models.conditional_encoders.encoder_factory import DinoImageEmbedder
 
@@ -13,17 +10,22 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
 
     def __init__(self, *,
                  shape_model,
-                 clip_model_version: str = "facebook/dinov2-large"):
+                 clip_model_version: str = "facebook/dinov2-large",
+                 use_contrastive: bool = True):
 
         super().__init__()
 
-        self.clip_model: DinoImageEmbedder = None #DinoImageEmbedder(version=clip_model_version)
-        # for params in self.clip_model.parameters():
-        #     params.requires_grad = False
+        self.use_contrastive = use_contrastive
+        if self.use_contrastive:
+            self.clip_model: DinoImageEmbedder = DinoImageEmbedder(version=clip_model_version)
+            for params in self.clip_model.parameters():
+                params.requires_grad = False
+        else:
+            self.clip_model = None
 
         self.shape_model = shape_model
-        # self.shape_projection = nn.Parameter(torch.empty(self.shape_model.width, self.clip_model.model.config.hidden_size))
-        # nn.init.normal_(self.shape_projection, std=self.clip_model.model.config.hidden_size ** -0.5)
+        self.shape_projection = nn.Parameter(torch.empty(self.shape_model.width, self.clip_model.model.config.hidden_size))
+        nn.init.normal_(self.shape_projection, std=self.clip_model.model.config.hidden_size ** -0.5)
 
     def set_shape_model_only(self):
         self.clip_model = None
@@ -44,12 +46,12 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
         feats = surface[..., 3:]
 
         shape_embed, shape_latents = self.shape_model.encode_latents(pc, feats)
-        # x = shape_embed @ self.shape_projection
+        x = shape_embed @ self.shape_projection
 
         if return_latents:
-            return shape_embed, shape_latents
+            return x, shape_latents
         else:
-            return shape_embed
+            return x
 
     def encode_image_embed(self, image):
         """
@@ -61,7 +63,7 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
             x (torch.FloatTensor): [bs, projection_dim]
         """
 
-        x = self.clip_model.encode(image)[:, 0] # cls token
+        x = self.clip_model.encode(image).mean(dim=1)
 
         return x
 
@@ -107,7 +109,10 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
 
         # shape embedding
         shape_embed, shape_latents = self.encode_shape_embed(surface, return_latents=True)
-        image_embed = torch.zeros_like(shape_embed) #self.encode_image_embed(image)
+        if self.use_contrastive:
+            image_embed = self.encode_image_embed(image)
+        else:
+            image_embed = torch.zeros_like(shape_embed)
 
         embed_outputs = {
             "image_embed": image_embed,

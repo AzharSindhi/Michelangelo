@@ -108,7 +108,7 @@ class ASLDiffuser(pl.LightningModule):
         for param in self.first_stage_model.parameters():
             param.requires_grad = False
 
-        self.first_stage_model = self.first_stage_model.to(self.device)
+        # self.first_stage_model = self.first_stage_model.to(self.device)
 
     # def instantiate_cond_stage(self, config):
     #     if not self.cond_stage_trainable:

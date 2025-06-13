@@ -1,6 +1,11 @@
 from pytorch_lightning import Callback
 import os
 import numpy as np
+from git import Repo
+from datetime import datetime
+from html import escape
+import difflib
+import tempfile
 
 class GitInfoLogger(Callback):
     """
@@ -73,7 +78,8 @@ class GitInfoLogger(Callback):
                 continue
             if os.path.isdir(abs_path):
                 continue
-            
+            if not os.path.exists(path): # TO-DO: handle deleted files
+                continue
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 working_lines = f.readlines()
             committed_lines = repo.git.show(f":{path}").splitlines(keepends=True)
@@ -98,25 +104,28 @@ class GitInfoLogger(Callback):
         self.get_untracked_info(repo)
         self.html.append('</body></html>')
 
-    def log_git_details(self, mlflow_logger):
+    def log_git_diff(self, mlflow_logger):
 
         # Git metadata
-        git_info = get_git_info()
+        git_info = self.get_git_info()
         if git_info:
             repo = git_info.pop("repo")
-            for key, value in git_info.items():
-                mlflow.set_tag(key, value)
+            # for key, value in git_info.items():
+            #     mlflow_logger.log_tag(key, value)
 
             # Log patch if working directory is dirty
             if git_info.get("git_dirty"):
-                html = generate_inline_git_diff_html(mlflow_logger, repo)
+                try:
+                    self.generate_inline_git_diff_html(repo)
+                except Exception as e:
+                    print(f"❌ Git inline diff failed: {e}")
                 with tempfile.NamedTemporaryFile(delete=True, prefix="git_diff", suffix=".html") as tmpfile:
-                    tmpfile.write("\n".join(html).encode("utf-8"))  
-                    mlflow.log_artifact(tmpfile.name)
+                    tmpfile.write("\n".join(self.html).encode("utf-8"))  
+                    mlflow_logger.experiment.log_artifact(local_path=tmpfile.name, run_id=mlflow_logger.run_id)
                     print(f"✅ Git inline diff saved and logged as: {tmpfile.name}")
         
         print("MLflow run completed with Git metadata.")
 
     def on_train_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         logger = pl_module.logger
-        self.log_git_details(logger)
+        self.log_git_diff(logger)

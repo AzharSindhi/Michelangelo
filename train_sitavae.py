@@ -22,8 +22,7 @@ from tqdm import tqdm
 from pytorch_lightning.tuner import lr_finder
 import time
 import argparse
-from mlflow_git import log_git_details
-
+from michelangelo.callbacks.logger_callbacks import GitInfoLogger
 
 class ShapeNetViPCDataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int = 4, num_workers: int = 4,
@@ -71,7 +70,7 @@ def set_seed(seed=42):
     cudnn.deterministic = True
     os.environ["PYTHONHASHSEED"] = str(seed)
 
-def train(run_name_prefix="", experiment_name="sitavae"):
+def train(args):
     # seed everything
     set_seed(42)
     
@@ -80,19 +79,30 @@ def train(run_name_prefix="", experiment_name="sitavae"):
     config = OmegaConf.load(config_path)
     if config.overfit_batches > 0:
         config.model.dropout = 0.0
-
+    if not args.use_contrastive:
+        config.model.params.loss_cfg.params.contrast_weight = 0.0
+    if args.use_clip_cond:
+        config.model.params.aligned_module_cfg.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
+    else:
+        config.model.params.aligned_module_cfg.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
     # run name based on time and process id and prefix
-    run_name = f"{run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name=experiment_name, run_name=run_name)
-    log_git_details(mlf_logger)
+    run_name = f"{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
+    git_logger = GitInfoLogger()
+    commits_info = git_logger.get_git_info()
+    mlf_logger = MLFlowLogger(experiment_name=args.experiment_name, run_name=run_name, tags=commits_info)
+    # for logging git commits
+    git_logger.log_git_diff(mlf_logger)
+    mlf_logger.log_hyperparams(config)
+    mlf_logger.log_hyperparams(vars(args))
+
     # return 
     print(f"INFO: Run name: {run_name}, run_id: {mlf_logger.run_id}")
     # Initialize model
     ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
     # ignore_keys = []
     sita_vae = AlignedShapeAsLatentPLModule(
-        device=config.device,
         dtype=torch.float32,
+        device="cuda",
         shape_module_cfg=config.model.params.shape_module_cfg,
         aligned_module_cfg=config.model.params.aligned_module_cfg,
         loss_cfg=config.model.params.loss_cfg,
@@ -150,7 +160,7 @@ def train(run_name_prefix="", experiment_name="sitavae"):
     )
     
     lr_monitor = LearningRateMonitor(logging_interval='step')
-    print(f"INFO: Visualization directory: out_pointclouds/{run_name_prefix}_{mlf_logger.run_id}")
+    print(f"INFO: Visualization directory: out_pointclouds/{run_name}_{mlf_logger.run_id}")
 
     # Point cloud saver callback
     pc_saver = PointCloudSaver(
@@ -168,7 +178,7 @@ def train(run_name_prefix="", experiment_name="sitavae"):
     trainer = pl.Trainer(
         max_epochs=config.max_epochs,
         accelerator="gpu",
-        devices=config.devices,
+        gpus=config.gpus,
         strategy=config.strategy,
         callbacks=callbacks,
         enable_model_summary=True,
@@ -200,8 +210,17 @@ def train(run_name_prefix="", experiment_name="sitavae"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_name", "-r",type=str, required=True)
-    parser.add_argument("--experiment_name", "-e",type=str, default="sita_vae_dino")
+    parser.add_argument("--run_name", "-r",type=str, default="scratch")
+    parser.add_argument("--experiment_name", "-e",type=str, default="lightning_logs")
+    parser.add_argument("--use_clip_cond", "-c", action="store_true")
+    parser.add_argument("--use_contrastive", action="store_true")
     args = parser.parse_args()
-    args.run_name = args.run_name + "_dino"
-    train(args.run_name, args.experiment_name)
+    if args.use_clip_cond:
+        args.run_name += "_clip"
+    else:
+        args.run_name += "_dino"
+    if args.use_contrastive:
+        args.run_name += "_contrastive"
+    else:
+        args.run_name += "_nocontrast"
+    train(args)

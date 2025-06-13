@@ -23,7 +23,7 @@ from pytorch_lightning.tuner import lr_finder
 import time
 import argparse
 from michelangelo.models.asl_diffusion.clip_asl_diffuser_pl_module import ClipASLDiffuser
-
+from michelangelo.callbacks.logger_callbacks import GitInfoLogger
 
 class ShapeNetViPCDataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int = 4, num_workers: int = 4,
@@ -78,11 +78,20 @@ def train(args):
     config = OmegaConf.load(config_path)
     if args.use_clip_cond:
         config.model.params.cond_stage_config = config.clip_cond_stage_config
+        config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
     else:
         config.model.params.cond_stage_config = config.dino_cond_stage_config
+        config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
     # run name based on time and process id and prefix
-    run_name = f"diff_{args.run_name_prefix}_{time.strftime('%Y%m%d-%H%M')}"
-    mlf_logger = MLFlowLogger(experiment_name=args.experiment_name, run_name=run_name)
+    run_name = f"diff_{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
+    git_logger = GitInfoLogger()
+    commits_info = git_logger.get_git_info()
+    mlf_logger = MLFlowLogger(experiment_name=args.experiment_name, run_name=run_name, tags=commits_info)
+    # for logging git commits
+    git_logger.log_git_diff(mlf_logger)
+    mlf_logger.log_hyperparams(config)
+    mlf_logger.log_hyperparams(vars(args))
+
     print(f"INFO: Run name: {run_name}")
     # Initialize model
     clip_diffuser = ClipASLDiffuser(**config.model.params)
@@ -98,7 +107,7 @@ def train(args):
         image_size=config.data.image_size
     )
 
-    dirpath = f"diffusion_checkpoints/{run_name_prefix}_{mlf_logger.run_id}"
+    dirpath = f"diffusion_checkpoints/{run_name}_{mlf_logger.run_id}"
     print(f"INFO: Save direcotry:{dirpath}")
     checkpoint_callback = ModelCheckpoint(
         monitor='val/total_loss',
@@ -108,10 +117,8 @@ def train(args):
         save_last=True,
         mode='min',
     )
-    # for logging git commits
-    git_log_callback = GitInfoLogCallback()
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
-    vis_dir = f'out_sampled_pcs/{run_name_prefix}_{mlf_logger.run_id}'
+    vis_dir = f'out_sampled_pcs/{run_name}_{mlf_logger.run_id}'
     print(f"INFO: visualization directory:{vis_dir}")
     # Point cloud sampler callback
     pc_sampler = PointCloudSampler(
@@ -120,7 +127,7 @@ def train(args):
         every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
     )
     # bs_finder = BatchSizeFinder(mode='binsearch', init_val=config.batch_size)
-    callbacks = [lr_monitor, git_log_callback, checkpoint_callback, pc_sampler]
+    callbacks = [lr_monitor, checkpoint_callback, pc_sampler]
     if config.use_swa:
         swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
         callbacks.append(swa_callback)
@@ -161,9 +168,9 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_name", "-r",type=str, required=True)
-    parser.add_argument("--experiment_name", "-e",type=str, default="diffusion_dino")
-    parser.add_argument("--use_clip_cond", type=bool, action="store_true")
+    parser.add_argument("--run_name", "-r",type=str, default="scratch")
+    parser.add_argument("--experiment_name", "-e",type=str, default="lightning_logs")
+    parser.add_argument("--use_clip_cond", action="store_true")
     args = parser.parse_args()
     args.run_name = args.run_name + "_diff"
     if args.use_clip_cond:

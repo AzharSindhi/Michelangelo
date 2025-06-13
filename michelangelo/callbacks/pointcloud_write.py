@@ -40,19 +40,22 @@ class PointCloudSaver(Callback):
         if (trainer.current_epoch + 1) % self.every_n_epochs != 0:
             return
         # pl_module.eval()
-        self.save_batch(batch, pl_module, "train", trainer.current_epoch)
+        outputs = pl_module.last_train_output
+        self.save_batch(batch, outputs, "train", trainer.current_epoch)
         # pl_module.train()
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx) -> None:
         if (trainer.current_epoch + 1) % self.every_n_epochs != 0:
             return
         # pl_module.eval()
-        self.save_batch(batch, pl_module, "test", trainer.current_epoch)
+        outputs = pl_module.last_val_output
+        self.save_batch(batch, outputs, "test", trainer.current_epoch)
     
     def on_predict_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
-        self.save_batch(batch, pl_module, "predict", trainer.current_epoch)
+        outputs = pl_module.last_predict_output
+        self.save_batch(batch, outputs, "predict", trainer.current_epoch)
 
-    def save_batch(self, batch, pl_module, name, current_epoch):
+    def save_batch(self, batch, outputs, name, current_epoch):
 
         # Limit number of samples to save
         num_samples = min(self.max_samples, batch["surface"].shape[0])
@@ -61,21 +64,17 @@ class PointCloudSaver(Callback):
         batch = {k: v[:num_samples] for k, v in batch.items()}
         
         # Move batch to device
-        device = pl_module.device
-        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
-                for k, v in batch.items()}
+        # batch = {k: v if isinstance(v, torch.Tensor) else v 
+        #         for k, v in batch.items()}
         
         # Get model predictions
         with torch.no_grad():
             incomplete_points = batch["incomplete_points"][..., :3]
             surface = batch["surface"]
-            image = batch["image"]
-            text = batch["text"]
-            outputs = pl_module.forward(surface, image, text, incomplete_points)
         
         # Get original and reconstructed point clouds
         original_pcs = surface[..., :3].cpu().numpy()  # [B, N, 3]
-        reconstructed_pcs = outputs[1][:, -pl_module.numpoints:, :].cpu().numpy()  # [B, N, 3]
+        reconstructed_pcs = outputs.cpu().numpy()  # [B, N, 3]
         incomplete_points = incomplete_points.cpu().numpy()
         
         # Create directory for this epoch

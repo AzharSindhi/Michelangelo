@@ -33,13 +33,14 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                  optimizer_cfg: Optional[DictConfig] = None,
                  ckpt_path: Optional[str] = None,
                  ignore_keys: Union[Tuple[str], List[str]] = (),
-                 device="cuda", dtype=torch.float32,
+                 dtype=torch.float32,
+                 device="cuda",
                  numpoints: int = 4096):
 
         super().__init__()
 
         shape_model: ShapeAsLatentModule = instantiate_from_config(
-            shape_module_cfg, device=device, dtype=dtype
+            shape_module_cfg, dtype=dtype, device=device
         )
         self.model: AlignedShapeAsLatentModule = instantiate_from_config(
             aligned_module_cfg, shape_model=shape_model
@@ -58,6 +59,9 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
             self.learning_rate = 1.e-4
         
         self.numpoints = numpoints
+        # for callbacks and logging
+        self.last_train_output = None
+        self.last_val_output = None
         self.save_hyperparameters()
 
     def set_shape_model_only(self):
@@ -100,20 +104,22 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
         if self.optimizer_cfg is None:
             optimizers = [torch.optim.AdamW(trainable_parameters, lr=self.learning_rate, betas=(0.9, 0.99), weight_decay=1e-3)]
-            schedulers = []
         else:
             optimizer = instantiate_from_config(self.optimizer_cfg.optimizer, params=trainable_parameters)
+            optimizers = [optimizer]
+
+        schedulers = []
+        if hasattr(self, 'optimizer_cfg') and hasattr(self.optimizer_cfg, 'scheduler'):
             scheduler_func = instantiate_from_config(
                 self.optimizer_cfg.scheduler,
-                optimizer=optimizer,
+                optimizer=optimizers[0],
             )
             scheduler = {
-                "scheduler": scheduler_func, #lr_scheduler.LambdaLR(optimizer, lr_lambda=scheduler_func.schedule),
+                "scheduler": scheduler_func,
                 "interval": "epoch",
                 "frequency": 1,
                 "monitor": "train/total_loss"
             }
-            optimizers = [optimizer]
             schedulers = [scheduler]
 
         return optimizers, schedulers
@@ -213,6 +219,9 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
                       sync_dist=True, on_step=False, on_epoch=True)
 
+        self.last_train_output = reconstructed_pc.detach().clone().cpu()
+        self.last_train_output = self.last_train_output[:, -self.numpoints:]
+
         return aeloss
 
     def validation_step(self, batch: Dict[str, torch.FloatTensor], batch_idx: int) -> torch.FloatTensor:
@@ -236,6 +245,9 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
                       sync_dist=True, on_step=False, on_epoch=True)
 
+        self.last_val_output = reconstructed_pc.detach().clone().cpu()
+        self.last_val_output = self.last_val_output[:, -self.numpoints:]
+
         return aeloss
     
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):
@@ -257,6 +269,9 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         )
         # self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
         #               sync_dist=True, on_step=False, on_epoch=True)
+
+        self.last_predict_output = reconstructed_pc.detach().clone().cpu()
+        self.last_predict_output = self.last_predict_output[:, -self.numpoints:]
 
         return aeloss
     

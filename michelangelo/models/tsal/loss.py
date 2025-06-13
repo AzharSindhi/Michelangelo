@@ -246,6 +246,45 @@ class ContrastKLNearFar(nn.Module):
         self.num_near_samples = num_near_samples
         self.chamfer_distance = ChamferDistance()
 
+    def calculate_contrastive_loss(self,
+                                   shape_embed: torch.FloatTensor,
+                                   text_embed: torch.FloatTensor,
+                                   image_embed: torch.FloatTensor,
+                                   logit_scale: torch.FloatTensor):
+        # normalized features
+        shape_embed = F.normalize(shape_embed, dim=-1, p=2)
+        if text_embed is not None:
+            text_embed = F.normalize(text_embed, dim=-1, p=2)
+        
+        image_embed = F.normalize(image_embed, dim=-1, p=2)
+
+        # gather features from all GPUs
+        if text_embed is not None:
+            shape_embed_all, text_embed_all, image_embed_all = misc.all_gather_batch(
+                [shape_embed, text_embed, image_embed]
+            )
+        else:
+            shape_embed_all, image_embed_all = misc.all_gather_batch(
+                [shape_embed, image_embed]
+            )
+
+        logits_per_shape_image = logit_scale * shape_embed @ image_embed_all.t()
+        logits_per_image_shape = logit_scale * image_embed @ shape_embed_all.t()
+
+        # cosine similarity as logits
+        text_contrastive_loss = 0
+        if text_embed is not None:
+            logits_per_shape_text = logit_scale * shape_embed @ text_embed_all.t()
+            logits_per_text_shape = logit_scale * text_embed @ shape_embed_all.t()
+            text_contrastive_loss = (F.cross_entropy(logits_per_shape_text, self.labels) +
+                         F.cross_entropy(logits_per_text_shape, self.labels)) / 2
+
+        
+        contrast_loss =  text_contrastive_loss + (F.cross_entropy(logits_per_shape_image, self.labels) +
+                         F.cross_entropy(logits_per_image_shape, self.labels)) / 2
+        
+        return contrast_loss
+    
     def forward(self,
                 shape_embed: torch.FloatTensor,
                 text_embed: torch.FloatTensor,
@@ -264,38 +303,11 @@ class ContrastKLNearFar(nn.Module):
             ).long()
             self.last_local_batch_size = local_batch_size
 
-        # normalized features
-        # shape_embed = F.normalize(shape_embed, dim=-1, p=2)
-        # if text_embed is not None:
-        #     text_embed = F.normalize(text_embed, dim=-1, p=2)
+        if self.chamfer_weight > 0:
+            contrast_loss = self.calculate_contrastive_loss(shape_embed, text_embed, image_embed, logit_scale)
+        else:
+            contrast_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
         
-        # image_embed = F.normalize(image_embed, dim=-1, p=2)
-
-        # # gather features from all GPUs
-        # if text_embed is not None:
-        #     shape_embed_all, text_embed_all, image_embed_all = misc.all_gather_batch(
-        #         [shape_embed, text_embed, image_embed]
-        #     )
-        # else:
-        #     shape_embed_all, image_embed_all = misc.all_gather_batch(
-        #         [shape_embed, image_embed]
-        #     )
-
-        # logits_per_shape_image = logit_scale * shape_embed @ image_embed_all.t()
-        # logits_per_image_shape = logit_scale * image_embed @ shape_embed_all.t()
-
-        # # cosine similarity as logits
-        # text_contrastive_loss = 0
-        # if text_embed is not None:
-        #     logits_per_shape_text = logit_scale * shape_embed @ text_embed_all.t()
-        #     logits_per_text_shape = logit_scale * text_embed @ shape_embed_all.t()
-        #     text_contrastive_loss = (F.cross_entropy(logits_per_shape_text, self.labels) +
-        #                  F.cross_entropy(logits_per_text_shape, self.labels)) / 2
-
-        
-        # contrast_loss =  text_contrastive_loss + (F.cross_entropy(logits_per_shape_image, self.labels) +
-        #                  F.cross_entropy(logits_per_image_shape, self.labels)) / 2
-        contrast_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
         if gt_pc.shape[-1] > 3:
             gt_pc = gt_pc[..., :3]
         
@@ -306,7 +318,7 @@ class ContrastKLNearFar(nn.Module):
         # shape reconstruction
         dist1, dist2 = self.chamfer_distance(gt_pc, reconstructed_pc)
         ch_dist = dist1.mean() + dist2.mean()
-        reconst_loss = ch_dist * self.chamfer_weight #+ self.mse_weight * F.mse_loss(gt_pc, reconstructed_pc)
+        reconst_loss = ch_dist * self.chamfer_weight
 
         if posteriors is None:
             kl_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
@@ -314,7 +326,7 @@ class ContrastKLNearFar(nn.Module):
             kl_loss = posteriors.kl(dims=(1, 2))
             kl_loss = torch.mean(kl_loss)
 
-        loss = reconst_loss + kl_loss * self.kl_weight #+ contrast_loss * self.contrast_weight
+        loss = reconst_loss + kl_loss * self.kl_weight + contrast_loss * self.contrast_weight
 
         # compute accuracy
         with torch.no_grad():
