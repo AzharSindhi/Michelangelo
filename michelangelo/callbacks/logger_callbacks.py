@@ -6,13 +6,15 @@ from datetime import datetime
 from html import escape
 import difflib
 import tempfile
+import wandb
 
 class GitInfoLogger(Callback):
     """
     Callback to save original and reconstructed point clouds as .xyz files after each epoch.
     """
     def __init__(
-        self
+        self,
+        repo_path: str = ".",
     ):
         """
         Args:
@@ -33,11 +35,13 @@ class GitInfoLogger(Callback):
             '<h1>Git Inline Diff Report</h1>',
             '<p><i>Includes both tracked and untracked changes.</i></p>'
         ]
+        self.repo_path = repo_path
+        self.repo = Repo(repo_path)
 
-    def get_git_info(self, repo_path="."):
 
-        repo = Repo(repo_path)
-        head_commit = repo.head.commit
+    def get_git_info(self):
+
+        head_commit = self.repo.head.commit
 
         # Basic Git info
         commit_info = {
@@ -45,11 +49,11 @@ class GitInfoLogger(Callback):
             "git_commit_message": head_commit.message.strip(),
             "git_commit_author": f"{head_commit.author.name} <{head_commit.author.email}>",
             "git_commit_date": datetime.fromtimestamp(head_commit.committed_date).isoformat(),
-            "git_branch": repo.active_branch.name if not repo.head.is_detached else "DETACHED_HEAD",
-            "git_dirty": repo.is_dirty(untracked_files=True),
-            "git_remotes": ", ".join([f"{remote.name} ({list(remote.urls)[0]})"
-                                        for remote in repo.remotes]) or "No remotes",
-            "repo": repo  # Return repo separately to use for diff logging
+            "git_branch": self.repo.active_branch.name if not self.repo.head.is_detached else "DETACHED_HEAD",
+            "git_dirty": self.repo.is_dirty(untracked_files=True),
+            # "git_remotes": ", ".join([f"{remote.name} ({list(remote.urls)[0]})"
+            #                             for remote in repo.remotes]) or "No remotes",
+            # "repo": self.repo  # Return repo separately to use for diff logging
         }
         return commit_info
 
@@ -69,7 +73,7 @@ class GitInfoLogger(Callback):
                 self.html.append(f'{esc}')
             self.html.append('</pre>')
 
-    def generate_inline_git_diff_html(self,repo):
+    def generate_inline_git_diff_html(self, repo):
         # Tracked changes
         for diff_item in repo.index.diff(None):
             path = diff_item.a_path
@@ -104,25 +108,23 @@ class GitInfoLogger(Callback):
         self.get_untracked_info(repo)
         self.html.append('</body></html>')
 
-    def log_git_diff(self, mlflow_logger):
+    def log_git_diff(self, logger):
 
         # Git metadata
         git_info = self.get_git_info()
         if git_info:
-            repo = git_info.pop("repo")
             # for key, value in git_info.items():
             #     mlflow_logger.log_tag(key, value)
 
             # Log patch if working directory is dirty
             if git_info.get("git_dirty"):
                 try:
-                    self.generate_inline_git_diff_html(repo)
+                    self.generate_inline_git_diff_html(self.repo)
                 except Exception as e:
                     print(f"❌ Git inline diff failed: {e}")
-                with tempfile.NamedTemporaryFile(delete=True, prefix="git_diff", suffix=".html") as tmpfile:
-                    tmpfile.write("\n".join(self.html).encode("utf-8"))  
-                    mlflow_logger.experiment.log_artifact(local_path=tmpfile.name, run_id=mlflow_logger.run_id)
-                    print(f"✅ Git inline diff saved and logged as: {tmpfile.name}")
+                
+                wandb_html = wandb.Html("\n".join(self.html))
+                logger.experiment.log({"git_diff": wandb_html})
         
         print("MLflow run completed with Git metadata.")
 

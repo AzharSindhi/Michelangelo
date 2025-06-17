@@ -16,6 +16,7 @@ run = wandb.init(
         "epochs": 10,
     },
 )
+wandb.run.log_code(".")
 
 # Simulate training.
 epochs = 10
