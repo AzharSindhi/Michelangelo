@@ -75,16 +75,16 @@ def train(args):
     set_seed(42)
     
     # Load config
-    config_path = "configs/aligned_shape_latents/shapevae-256.yaml"
+    config_path = "configs/aligned_shape_latents/pointnetvae-256.yaml"
     config = OmegaConf.load(config_path)
     if config.overfit_batches > 0:
         config.model.dropout = 0.0
     if not args.use_contrastive:
         config.model.params.loss_cfg.params.contrast_weight = 0.0
-    if args.use_clip_cond:
-        config.model.params.aligned_module_cfg.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
-    else:
-        config.model.params.aligned_module_cfg.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
+    # if args.use_clip_cond:
+    #     config.model.params.aligned_module_cfg.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
+    # else:
+    #     config.model.params.aligned_module_cfg.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
     # run name based on time and process id and prefix
     run_name = f"{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
     git_logger = GitInfoLogger()

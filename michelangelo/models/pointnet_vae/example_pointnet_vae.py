@@ -5,11 +5,11 @@ import torch.nn as nn
 # from pointnet2.models.pointnet2_ssg_cls import PointNet2ClassificationSSG
 from pointnet2_ssg_sem import PointNet2SemSegSSG, calc_t_emb, swish
 # from pointnet2_ssg_sem import PointNet2SemSegSSG, calc_t_emb, swish
-from models.clip_encoder import CLIPEncoder
-from models.dino_encoder import DinoEncoder
-from models.pnet import Pnet2Stage
-from models.model_utils import get_embedder
-from models.mlp_transform import ProjectCrossAttend
+# from clip_encoder import CLIPEncoder
+# from dino_encoder import DinoEncoder
+from pnet import Pnet2Stage
+# from model_utils import get_embedder
+from mlp_transform import ProjectCrossAttend
 import torch.nn.functional as F
 import copy
 import numpy as np
@@ -24,7 +24,7 @@ from functools import wraps
 import torch
 from torch import nn, einsum
 import torch.nn.functional as F
-
+from omegaconf import OmegaConf
 from einops import rearrange, repeat
 
 # helpers
@@ -250,7 +250,8 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         self.decoder_cond_features = None
         self.global_feature = None
 
-        self.attention_setting = self.hparams.get("attention_setting", None)
+        # self.attention_setting = self.hparams.get("attention_setting", None)
+        self.attention_setting = OmegaConf.to_container(self.hparams.get("attention_setting", None), resolve=True)
         self.FeatureMapper_attention_setting = copy.deepcopy(self.attention_setting)
         if self.FeatureMapper_attention_setting is not None:
             self.FeatureMapper_attention_setting['use_attention_module'] = (
@@ -522,22 +523,13 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
             queries_encoder=transformed_img_features
         ).permute(0, 2, 1).contiguous()
 
-    def forward(
-            self,
-            pointcloud,
-            condition,
-            class_index = None,
-            ts=None,
-            label=None,
-            use_retained_condition_feature=False
-    ):
-        label = None
-        use_retained_condition_feature = False
-        image_features = torch.zeros((pointcloud.shape[0], self.image_out_dim)).cuda() 
+    def _prepare_inputs(self, pointcloud, condition, class_index=None):
+        """Prepare and preprocess input tensors."""
+        image_features = torch.zeros((pointcloud.shape[0], self.image_out_dim)).cuda()
+        
         with torch.no_grad():
             if class_index is not None and self.image_fusion_strategy != 'none':
-                image_features = self.image_processor.get_image_features(class_index) # shape (B, 512)
-                # normalize clip features
+                image_features = self.image_processor.get_image_features(class_index)
                 image_features = image_features / torch.norm(image_features, dim=1, keepdim=True)
             
             xyz_ori = pointcloud[:,:,0:3] / self.scale_factor
@@ -552,17 +544,12 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
 
             uvw, cond_features = self._break_up_pc(condition)
             uvw = uvw / self.scale_factor
-            # if self.image_fusion_strategy == 'input':
-            #     # cond_features shape (B, D, N)
-            #     # image_features shape (B, 512)
-            #     # cond_features shape (B, D+512, N)
-            #     # features shape (B, D+512, N)
-            #     image_features_reshaped = image_features.unsqueeze(2).expand(-1, -1, cond_features.shape[2])
-            #     cond_features = torch.cat([cond_features, image_features_reshaped], dim=1)
-            #     image_features_reshaped = image_features.unsqueeze(2).expand(-1, -1, features.shape[2])
-            #     features = torch.cat([features, image_features_reshaped], dim=1)
-
-        if (not ts is None) and self.hparams['include_t']:
+            
+        return xyz, features, uvw, cond_features, i_pc, image_features
+        
+    def _get_condition_embeddings(self, ts, label, i_pc):
+        """Get time and class condition embeddings."""
+        if (ts is not None) and self.hparams['include_t']:
             t_emb = calc_t_emb(ts, self.hparams['t_dim'])
             t_emb = self.fc_t1(t_emb)
             t_emb = self.activation(t_emb)
@@ -571,58 +558,51 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         else:
             t_emb = None
 
-        if (not label is None) and self.hparams['include_class_condition']:
-            # label should be 1D tensor of integers of shape (B)
-            class_emb = self.class_emb(label) # shape (B, condition_emb_dim)
+        if (label is not None) and self.hparams['include_class_condition']:
+            class_emb = self.class_emb(label)
         else:
             class_emb = None
 
         if self.include_global_feature:
-            condition_emb = self.global_pnet(i_pc.transpose(1,2)) # either append image features here
+            condition_emb = self.global_pnet(i_pc.transpose(1,2))
             second_condition_emb = class_emb if self.hparams['include_class_condition'] else None
         else:
             condition_emb = class_emb if self.hparams['include_class_condition'] else None
-            second_condition_emb = None         
+            second_condition_emb = None
+            
+        return t_emb, condition_emb, second_condition_emb, class_emb
 
-        
-        # remove the condition branch and features based on argument
-        # condition on latent vector
-        # think of better approach for pointwise features from clip
-        # cond_features = torch.cat([cond_features, image_features.unsqueeze(2).expand(-1, -1, cond_features.shape[2])], dim=1)
+    def encode(self, xyz, features, uvw, cond_features, t_emb=None, condition_emb=None, second_condition_emb=None, image_features=None):
+        """Encode input point cloud and conditions into latent features."""
         l_uvw, l_cond_features = [uvw], [cond_features]
         l_xyz, l_features = [xyz], [features]
+        
+        # Encoder forward pass
         for i in range(len(self.SA_modules)):
-
             if self.include_local_feature:
-                # [B,(2048,1024,256,64,16),3], [B,(3,32,64,64,128),(2048,1024,256,64,16)]
-                # ---- Condition Encoder -----
+                # Condition encoder
                 li_uvw, li_cond_features = self.SA_modules_condition[i](
-                    l_uvw[i],
-                    l_cond_features[i],
-                    t_emb=None,
-                    condition_emb=None,
+                    l_uvw[i], l_cond_features[i],
+                    t_emb=None, condition_emb=None,
                     subset=True,
                     record_neighbor_stats=self.record_neighbor_stats,
                     pooling=self.pooling
                 )
-                if self.image_fusion_strategy == 'cross_attention':
-                    # cross attend li_cond_features with image features
+                
+                if self.image_fusion_strategy == 'cross_attention' and image_features is not None:
                     if image_features.ndim == 2:
                         image_features = image_features.unsqueeze(2).permute(0, 2, 1)
-                    
-                    li_cond_features = li_cond_features.permute(0, 2, 1)
-                    li_cond_features = self.condition_img_transform[i](li_cond_features, image_features.clone()).permute(0, 2, 1).contiguous()
+                    li_cond_features = self.condition_img_transform[i](
+                        li_cond_features.permute(0, 2, 1),
+                        image_features.clone()
+                    ).permute(0, 2, 1).contiguous()
                 
                 l_uvw.append(li_uvw)
                 l_cond_features.append(li_cond_features)
-                # ---- Condition Encoder -----
-
-            # [B,(2048,1024,256,64,16),3], [B,(3,(35,64),(96,128),(192,256),(320,512)),(2048,1024,256,64,16)]
-            # ---- Encoder ----
-            input_feature = l_features[i]
+            
+            # Main encoder
             li_xyz, li_features = self.SA_modules[i](
-                l_xyz[i],
-                input_feature,
+                l_xyz[i], l_features[i],
                 t_emb=t_emb,
                 condition_emb=condition_emb,
                 second_condition_emb=second_condition_emb,
@@ -630,35 +610,26 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
                 record_neighbor_stats=self.record_neighbor_stats,
                 pooling=self.pooling
             )
-
             l_xyz.append(li_xyz)
             l_features.append(li_features)
-            # ---- Encoder ----
-
-        #l_features[-1] shape (B, 512, N)
-        #l_cond_features[-1] shape (B, 512, N)
-        #l_xyz[-1] shape (B, 3, N)
-        #l_uvw[-1] shape (B, 3, N)
-        #l_i_pc[-1] shape (B, 3, N)
-        # image_features shape (B, 512)
-
-        if self.image_fusion_strategy == 'latent':
-            # l_cond_features[-1] shape (B, 512, N)
-            # image_features shape (B, 512)
-            # expand image_features to (B, 512, N)
-            image_features = image_features.unsqueeze(1)#.expand(-1, l_cond_features[-1].shape[2], -1)
-            l_cond_features[-1] = self.cond_latent_transform(l_cond_features[-1].permute(0, 2, 1), image_features).permute(0, 2, 1).contiguous()
-            # l_features[-1] = self.main_latent_transform(l_features[-1].permute(0, 2, 1)).permute(0, 2, 1)
-        elif self.image_fusion_strategy == 'only_clip':
-            # cross attend l_cond_features[-1] with image_features
-            # l_cond_features[-1] shape (B, 512, N)
-            # image_features shape (B, 512)
-            # expand image_features to (B, 512, N)
-            image_features = image_features.unsqueeze(1)#.expand(-1, l_cond_features[-1].shape[2], -1)
-            l_features[-1] = self.cond_latent_transform(l_features[-1].permute(0, 2, 1), image_features).permute(0, 2, 1).contiguous()
-
-        if len(l_cond_features) > 1 and self.use_cross_conditioning:           
-            # ---- Cross-Attention ----
+            
+        # Apply image fusion in latent space if needed
+        if image_features is not None:
+            if self.image_fusion_strategy == 'latent':
+                image_features = image_features.unsqueeze(1)
+                l_cond_features[-1] = self.cond_latent_transform(
+                    l_cond_features[-1].permute(0, 2, 1),
+                    image_features
+                ).permute(0, 2, 1).contiguous()
+            elif self.image_fusion_strategy == 'only_clip':
+                image_features = image_features.unsqueeze(1)
+                l_features[-1] = self.cond_latent_transform(
+                    l_features[-1].permute(0, 2, 1),
+                    image_features
+                ).permute(0, 2, 1).contiguous()
+        
+        # Cross-attention between condition and main features
+        if len(l_cond_features) > 1 and self.use_cross_conditioning:
             l_cond_features[-1] = self.att_c(
                 l_features[-1].permute(0, 2, 1),
                 queries_encoder=l_cond_features[-1].permute(0, 2, 1)
@@ -668,61 +639,85 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
                 l_cond_features[-1].permute(0, 2, 1),
                 queries_encoder=l_features[-1].permute(0, 2, 1)
             ).permute(0, 2, 1).contiguous()
-            # ---- Cross-Attention ----
-
-
-        if self.include_local_feature:
-            if use_retained_condition_feature and self.l_uvw is None:
-                self.l_uvw = l_uvw
-                self.encoder_cond_features = copy.deepcopy(l_cond_features)
-
+            
+        return l_xyz, l_features, l_uvw, l_cond_features
+    
+    def decode(self, l_xyz, l_features, l_uvw, l_cond_features, t_emb=None, condition_emb=None, second_condition_emb=None):
+        """Decode latent features back to point cloud space."""
+        # Decoder forward pass
         for i in range(-1, -(len(self.FP_modules) + 1), -1):
-
             if self.include_local_feature:
-                # [B,(16,64,256,1024,2048),3], [B,(128,64,64,32,32),(16,64,256,1024,2048)]
-                # ---- Condition Decoder ----
+                # Condition decoder
                 l_cond_features[i - 1] = self.FP_modules_condition[i](
-                    l_uvw[i - 1],
-                    l_uvw[i],
-                    l_cond_features[i - 1],
-                    l_cond_features[i],
-                    t_emb = None,
-                    condition_emb=None,
+                    l_uvw[i - 1], l_uvw[i],
+                    l_cond_features[i - 1], l_cond_features[i],
+                    t_emb=None, condition_emb=None,
                     record_neighbor_stats=self.record_neighbor_stats,
                     pooling=self.pooling
                 )
-                # ---- Condition Decoder ----
-
-            # [B,(16,64,256),3], [B,((640,256),(320,256),())]
-            # ---- Decoder ----
-            input_feature = l_features[i]
+            
+            # Main decoder
             l_features[i - 1] = self.FP_modules[i](
-                l_xyz[i - 1],
-                l_xyz[i],
-                l_features[i - 1],
-                input_feature,
-                t_emb = t_emb,
+                l_xyz[i - 1], l_xyz[i],
+                l_features[i - 1], l_features[i],
+                t_emb=t_emb,
                 condition_emb=condition_emb,
                 second_condition_emb=second_condition_emb,
                 record_neighbor_stats=self.record_neighbor_stats,
                 pooling=self.pooling
             )
-            # ---- Decoder ----
-
-        out_feature = l_features[0]
+            
+        return l_features[0], l_cond_features[0] if self.include_local_feature else None
+    
+    def forward(
+            self,
+            pointcloud,
+            condition,
+            class_index=None,
+            ts=None,
+            label=None,
+            use_retained_condition_feature=False
+    ):
+        # Prepare inputs and get initial features
+        xyz, features, uvw, cond_features, i_pc, image_features = self._prepare_inputs(
+            pointcloud, condition, class_index
+        )
+        
+        # Get condition embeddings
+        t_emb, condition_emb, second_condition_emb, _ = self._get_condition_embeddings(
+            ts, label, i_pc
+        )
+        
+        # Encode
+        l_xyz, l_features, l_uvw, l_cond_features = self.encode(
+            xyz, features, uvw, cond_features,
+            t_emb, condition_emb, second_condition_emb, image_features
+        )
+        
+        # Store condition features if needed
+        if self.include_local_feature and use_retained_condition_feature and self.l_uvw is None:
+            self.l_uvw = l_uvw
+            self.encoder_cond_features = copy.deepcopy(l_cond_features)
+        
+        # Decode
+        out_feature, condition_feature = self.decode(
+            l_xyz, l_features, l_uvw, l_cond_features,
+            t_emb, condition_emb, second_condition_emb
+        )
+        
+        # Process outputs
         out_feature = torch.cat([out_feature.transpose(1,2), i_pc, xyz], dim=-1).permute(0,2,1)
         out = self.fc_layer_noise(out_feature).permute(0,2,1)
-        # if (self.train): out = self.hparams['gamma'] * (out + i_pc)
-        if(self.include_local_feature and self.condition_loss):
-            condition_feature = l_cond_features[0]
+        
+        # Handle different output cases
+        if self.include_local_feature and self.condition_loss and condition_feature is not None:
             condition_feature = torch.cat([condition_feature.transpose(1,2), uvw], dim=-1).permute(0,2,1)
             condition_out = self.fc_layer_c(condition_feature).permute(0,2,1)
-            return out,condition_out
+            return out, condition_out
         elif self.condition_loss and self.image_fusion_strategy == 'only_clip':
-            # repeat the last dimension such that it matches the number of points
             R = uvw.shape[1] // l_cond_features[-1].shape[2]
             condition_feature = l_cond_features[-1].repeat_interleave(R, dim=2)
             condition_out = self.fc_layer_c(condition_feature).permute(0,2,1)
-            return out,condition_out
-        else:
-            return out
+            return out, condition_out
+            
+        return out

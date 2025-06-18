@@ -1,0 +1,166 @@
+{
+    "diffusion_config": {
+        "T": 1000,
+        "beta_0": 0.0001,
+        "beta_T": 0.0005,
+        "step": 50,
+        "save_xyz": true,
+        "save_sp": true,
+        "save_z": false,
+        "save_condition": true,
+        "save_gt": true,
+        "save_mesh": false,
+        "p2f": false,
+        "beta_schedule": "squaredcos_cap_v2"
+    },
+    "pointnet_config": {
+        "model_name": "pointnet",
+        "in_fea_dim": 3,
+        "partial_in_fea_dim": 0,
+        "out_dim": 3,
+        "include_t": true,
+        "t_dim": 128,
+        "model.use_xyz": true,
+        "attach_position_to_input_feature": true,
+        "include_abs_coordinate": true,
+        "include_center_coordinate": true,
+        "record_neighbor_stats": false,
+        "bn_first": false,
+        "bias": true,
+        "res_connect": true,
+        "map_type" : "cross_attention",
+        "condition_loss" : true,
+        "image_fusion_strategy" : "condition",
+        "include_class_condition": false,
+        "num_class": 256,
+        "class_condition_dim": 128,
+        "gamma": 0.5,
+
+        "bn": true,
+
+        "include_local_feature": true,
+        "include_global_feature": true,
+        "global_feature_remove_last_activation": false,
+        "pnet_global_feature_architecture": "[[3, 128, 256], [512, 1024]]",
+
+        "attention_setting": {
+            "use_attention_module": true,
+            "attention_bn": true,
+            "transform_grouped_feat_out": true,
+            "last_activation": true,
+            "add_attention_to_FeatureMapper_module": true
+        },
+        "architecture": {
+            "npoint": "[1024, 256, 64, 16]",
+            "radius": "[0.1, 0.2, 0.4, 0.8]",
+            "neighbor_definition": "radius",
+            "nsample": "[32, 32, 32, 32]",
+            "feature_dim": "[32, 64, 128, 256, 512]",
+            "mlp_depth": 3,
+            "decoder_feature_dim": "[128, 128, 256, 256, 512]",
+            "include_grouper": false,
+            "decoder_mlp_depth": 2,
+            "use_knn_FP": true,
+            "K": 8
+        },
+        "condition_net_architecture": {
+            "npoint": "[1024, 256, 64, 16]",
+            "radius": "[0.1, 0.2, 0.4, 0.8]",
+            "neighbor_definition": "radius",
+            "nsample": "[32, 32, 32, 32]",
+            "feature_dim": "[32, 32, 64, 64, 128]",
+            "mlp_depth": 3,
+            "decoder_feature_dim": "[32, 32, 64, 64, 128]",
+            "include_grouper": false,
+            "decoder_mlp_depth": 2,
+            "use_knn_FP": true,
+            "K": 8
+        },
+        "feature_mapper_architecture": {
+            "neighbor_definition": "radius",
+            "encoder_feature_map_dim": "[32, 32, 64, 64]",
+            "encoder_mlp_depth": 2,
+            "encoder_radius": "[0.1, 0.2, 0.4, 0.8]",
+            "encoder_nsample": "[32, 32, 32, 32]",
+            "decoder_feature_map_dim": "[32, 32, 64, 64, 128]",
+            "decoder_mlp_depth": 2,
+            "decoder_radius": "[0.1, 0.2, 0.4, 0.8, 1.6]",
+            "decoder_nsample": "[32, 32, 32, 32, 32]"
+        },
+        "clip_processor": {
+            "model_name": "clip_processor",
+            "clip_model_name": "clip_vit_b_32",
+            "clip_model_path": "",
+            "clip_dim": 512,
+            "class_names": ["bathtub", "bed", "chair", "desk", "dresser", "monitor", "night_stand", "sofa", "table", "toilet"]
+        }
+    },
+    "train_config": {
+        "dataset": "ViPC",
+        "root_directory": "exp_vipc",
+        "epochs_per_ckpt": 10,
+        "n_epochs": 2000,
+        "learning_rate": 0.0002
+    },
+    "vipc_dataset_config": {
+        "dataset": "ViPC",
+        "data_dir": "~/Documents/datasets/ShapeNetViPC-Dataset",
+        "category": "plane",
+        "mini": true,
+        "class_names": ["bathtub", "bed", "chair", "desk", "dresser", "monitor", "night_stand", "sofa", "table", "toilet"],
+        "npoints": 4096,
+        "image_size": 256,
+        "view_align": true,
+        "novel_input": false,
+        "novel_input_only": false,
+        "scale": 1,
+        "num_workers": 4,
+        "num_samples_tested": 1600,
+        "test_trainset_during_eval": true,
+        "include_generated_samples": false,
+        "augmentation": {
+            "pc_augm_scale": 1.2,
+            "pc_augm_rot": true,
+            "pc_rot_scale": 90,
+            "pc_augm_mirror_prob": 0.5,
+            "pc_augm_jitter": false,
+            "translation_magnitude": 0.1,
+            "noise_magnitude_for_generated_samples": 0
+        },
+        "R": 1,
+        "batch_size": 128,
+        "eval_batch_size": 128,
+        "debug": false,
+        "mse_weight": 0.6,
+        "cd_weight": 0.1
+    },
+    "gen_config": {
+        "ckpt_path": "logs/checkpoint"
+    },
+    "trainer_args": {
+        "log_every_n_steps": 10,
+        "check_val_every_n_epoch": 30,
+        "overfit_batches": 0,
+        "limit_train_batches": null,
+        "limit_val_batches": null,
+        "limit_test_batches": null,
+        "gradient_clip_val": 0.5,
+        "fast_dev_run": false,
+        "precision": "16-mixed",
+        "accelerator": "gpu",
+        "devices": 1
+    },
+    "evaluation_config": {
+        "num_samples": 4,
+        "eval_log_every_n_epochs": 1,
+        "outdir": "logs/visualization",
+        "step": 30,
+        "save_xyz": true,
+        "save_sp": true,
+        "save_z": false,
+        "save_condition": true,
+        "save_gt": true,
+        "save_mesh": false,
+        "p2f": false
+    }
+}
