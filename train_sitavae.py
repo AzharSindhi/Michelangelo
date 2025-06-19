@@ -88,12 +88,12 @@ def train(args):
     # run name based on time and process id and prefix
     run_name = f"{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
     git_logger = GitInfoLogger()
-    commits_info = git_logger.get_git_info()
+    commits_info = None #git_logger.get_git_info()
     mlf_logger = MLFlowLogger(experiment_name=args.experiment_name, run_name=run_name, tags=commits_info)
     # for logging git commits
-    git_logger.log_git_diff(mlf_logger)
-    mlf_logger.log_hyperparams(config)
-    mlf_logger.log_hyperparams(vars(args))
+    # git_logger.log_git_diff(mlf_logger)
+    # mlf_logger.log_hyperparams(config)
+    # mlf_logger.log_hyperparams(vars(args))
 
     # return 
     print(f"INFO: Run name: {run_name}, run_id: {mlf_logger.run_id}")
@@ -178,7 +178,7 @@ def train(args):
     trainer = pl.Trainer(
         max_epochs=config.max_epochs,
         accelerator="gpu",
-        gpus=config.gpus,
+        devices=config.devices,
         strategy=config.strategy,
         callbacks=callbacks,
         enable_model_summary=True,

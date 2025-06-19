@@ -12,6 +12,7 @@ from typing import Union
 from functools import partial
 
 from michelangelo.utils import instantiate_from_config
+from michelangelo.utils.misc import get_obj_from_str
 
 from .inference_utils import extract_geometry
 from .tsal_base import (
@@ -23,6 +24,8 @@ from .tsal_base import (
 import numpy as np
 from einops import repeat
 from torch import nn
+from michelangelo.models.pointnet_vae.pointnet2_vae import PointNet2CloudCondition
+from michelangelo.models.tsal.loss import ContrastKLNearFar
 
 class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
@@ -38,15 +41,14 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                  numpoints: int = 4096):
 
         super().__init__()
-
-        shape_model: ShapeAsLatentModule = instantiate_from_config(
-            shape_module_cfg, dtype=dtype, device=device
-        )
+        
+        cls = get_obj_from_str(shape_module_cfg.target)
+        shape_model: PointNet2CloudCondition = cls(shape_module_cfg.params)
         self.model: AlignedShapeAsLatentModule = instantiate_from_config(
             aligned_module_cfg, shape_model=shape_model
         )
 
-        self.loss = instantiate_from_config(loss_cfg)
+        self.loss: ContrastKLNearFar = instantiate_from_config(loss_cfg)
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         else:
@@ -97,22 +99,21 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         if len(unexpected) > 0:
             print(f"Unexpected Keys: {unexpected}")
 
-    def configure_optimizers(self) -> Tuple[List, List]:
+    def configure_optimizers(self):
         # lr = self.learning_rate
 
         trainable_parameters = list(self.model.parameters())
 
         if self.optimizer_cfg is None:
-            optimizers = [torch.optim.AdamW(trainable_parameters, lr=self.learning_rate, betas=(0.9, 0.99), weight_decay=1e-3)]
+            optimizer = torch.optim.AdamW(trainable_parameters, lr=self.learning_rate, betas=(0.9, 0.99), weight_decay=1e-3)
         else:
             optimizer = instantiate_from_config(self.optimizer_cfg.optimizer, params=trainable_parameters)
-            optimizers = [optimizer]
 
-        schedulers = []
+        scheduler = None
         if hasattr(self, 'optimizer_cfg') and hasattr(self.optimizer_cfg, 'scheduler'):
             scheduler_func = instantiate_from_config(
                 self.optimizer_cfg.scheduler,
-                optimizer=optimizers[0],
+                optimizer=optimizer,
             )
             scheduler = {
                 "scheduler": scheduler_func,
@@ -120,39 +121,36 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                 "frequency": 1,
                 "monitor": "train/total_loss"
             }
-            schedulers = [scheduler]
 
-        return optimizers, schedulers
+        return [optimizer], [scheduler]
 
     def forward(self,
                 surface: torch.FloatTensor,
                 image: torch.FloatTensor,
                 text: torch.FloatTensor,
-                volume_queries: torch.FloatTensor):
+                incomplete_points: torch.FloatTensor):
 
         """
 
         Args:
             surface (torch.FloatTensor):
+            incomplete_points (torch.FloatTensor):
             image (torch.FloatTensor):
             text (torch.FloatTensor):
-            volume_queries (torch.FloatTensor):
 
         Returns:
+            embed_outputs (dict):
+            recon_pc (torch.FloatTensor):
+            posterior (DiagonalGaussianDistribution):
 
         """
 
-        embed_outputs, shape_z = self.model(surface, image, text)
-        shape_zq, posterior = self.model.shape_model.encode_kl_embed(shape_z)
-        latents = self.model.shape_model.decode(shape_zq)
+        posterior = None
+        embed_outputs, shape_zq = self.model(surface, incomplete_points, image)
+        # shape_zq, posterior = self.model.shape_model.encode_kl_embed(shape_zq)
+        recon_pc, recon_pc_partial = self.model.shape_model.decode(shape_zq, incomplete_points)
         
-        # add position embedding
-        # volume_queries_learnable = volume_queries_learnable + self.position_transform(volume_queries)
-        # incomplete_points = volume_queries.clone()
-        recon_pc = self.model.shape_model.query_geometry(volume_queries, latents)
-        # recon_pc = recon_pc + incomplete_points
-        # recon_pc = recon_pc.clamp(-1.0, 1.0)
-        return embed_outputs, recon_pc, posterior
+        return embed_outputs, recon_pc, recon_pc_partial, posterior
 
     def encode(self, surface: torch.FloatTensor, sample_posterior=True):
 
@@ -167,7 +165,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
     def decode(self,
                z_q,
-               volume_queries: torch.FloatTensor,
+               incomplete_points: torch.FloatTensor,
             #    bounds: Union[Tuple[float], List[float], float] = 1.1,
             #    octree_depth: int = 7,
             #    num_chunks: int = 10000
@@ -176,11 +174,12 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         # generate point cloud from latent (decoder)
 
         latents = self.model.shape_model.decode(z_q)  # latents: [bs, num_latents, dim]
-        recon_pc = self.model.shape_model.query_geometry(volume_queries, latents)
+        recon_pc = self.model.shape_model.query_geometry(incomplete_points, latents)
         return recon_pc
 
     def training_step(self, batch: Dict[str, torch.FloatTensor],
-                      batch_idx: int, optimizer_idx: int = 0) -> torch.FloatTensor:
+                      batch_idx: int,
+                      optimizer_idx: int=0) -> torch.FloatTensor:
         """
 
         Args:
@@ -203,24 +202,26 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         image = batch["image"]
         text = batch["text"]
 
-        volume_queries = batch["incomplete_points"][..., 0:3] #batch["geo_points"][..., 0:3]
+        incomplete_points = batch["incomplete_points"][..., 0:3]
         # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1]) #batch["geo_points"][..., -1]
 
-        embed_outputs, reconstructed_pc, posteriors = self(surface, image, text, volume_queries)
+        embed_outputs, reconstructed_pc, reconstructed_pc_partial, posteriors = self(surface, image, text, incomplete_points)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
             reconstructed_pc=reconstructed_pc,
+            reconstructed_pc_partial=reconstructed_pc_partial,
             gt_pc=surface[..., :3],
+            gt_partial=incomplete_points,
             split="train"
         )
 
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
                       sync_dist=True, on_step=False, on_epoch=True)
 
-        self.last_train_output = reconstructed_pc.detach().clone().cpu()
-        self.last_train_output = self.last_train_output[:, -self.numpoints:]
+        self.last_train_output_pc = reconstructed_pc.detach().clone().cpu()
+        self.last_train_output_pc_partial = reconstructed_pc_partial.detach().clone().cpu()
 
         return aeloss
 
@@ -230,23 +231,25 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         image = batch["image"]
         text = batch["text"]
 
-        volume_queries = batch["incomplete_points"][..., 0:3]  #batch["geo_points"][..., 0:3]
+        incomplete_points = batch["incomplete_points"][..., 0:3]
         # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
 
-        embed_outputs, reconstructed_pc, posteriors = self(surface, image, text, volume_queries)
+        embed_outputs, reconstructed_pc, reconstructed_pc_partial, posteriors = self(surface, image, text, incomplete_points)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
             reconstructed_pc=reconstructed_pc,
+            reconstructed_pc_partial=reconstructed_pc_partial,
             gt_pc=surface[..., :3],
+            gt_partial=incomplete_points,
             split="val"
         )
         self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
                       sync_dist=True, on_step=False, on_epoch=True)
 
-        self.last_val_output = reconstructed_pc.detach().clone().cpu()
-        self.last_val_output = self.last_val_output[:, -self.numpoints:]
+        self.last_val_output_pc = reconstructed_pc.detach().clone().cpu()
+        self.last_val_output_pc_partial = reconstructed_pc_partial.detach().clone().cpu()
 
         return aeloss
     
@@ -255,23 +258,25 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         image = batch["image"]
         text = batch["text"]
 
-        volume_queries = batch["incomplete_points"][..., 0:3]  #batch["geo_points"][..., 0:3]
+        incomplete_points = batch["incomplete_points"][..., 0:3]
         # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
 
-        embed_outputs, reconstructed_pc, posteriors = self(surface, image, text, volume_queries)
+        embed_outputs, reconstructed_pc, reconstructed_pc_partial, posteriors = self(surface, image, text, incomplete_points)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
             reconstructed_pc=reconstructed_pc,
+            reconstructed_pc_partial=reconstructed_pc_partial,
             gt_pc=surface[..., :3],
+            gt_partial=incomplete_points,
             split="val"
         )
         # self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
         #               sync_dist=True, on_step=False, on_epoch=True)
 
-        self.last_predict_output = reconstructed_pc.detach().clone().cpu()
-        self.last_predict_output = self.last_predict_output[:, -self.numpoints:]
+        self.last_predict_output_pc = reconstructed_pc.detach().clone().cpu()
+        self.last_predict_output_pc_partial = reconstructed_pc_partial.detach().clone().cpu()
 
         return aeloss
     

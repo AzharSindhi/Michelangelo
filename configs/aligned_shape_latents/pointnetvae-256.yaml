@@ -3,13 +3,13 @@ model:
   params:
     ckpt_path: "checkpoints/aligned_shape_latents/pointnetvae-256.ckpt"
     shape_module_cfg:
-      _target_: michelangelo.models.pointnet_vae.example_pointnet_vae.PointNet2CloudCondition
+      target: michelangelo.models.pointnet_vae.pointnet2_vae.PointNet2CloudCondition
       params:
           model_name: "pointnet"
           in_fea_dim: 3
           partial_in_fea_dim: 0
           out_dim: 3
-          include_t: true
+          include_t: false
           t_dim: 128
           "model.use_xyz": true
           attach_position_to_input_feature: true
@@ -55,13 +55,13 @@ model:
             use_knn_FP: true
             K: 8
           condition_net_architecture:
-            npoint: [1024, 256, 64, 16]
+            npoint: [2048, 512, 128, 32]
             radius: [0.1, 0.2, 0.4, 0.8]
             neighbor_definition: "radius"
             nsample: [32, 32, 32, 32]
-            feature_dim: [32, 32, 64, 64, 128]
+            feature_dim: [128, 128, 256, 256, 512]
             mlp_depth: 3
-            decoder_feature_dim: [32, 32, 64, 64, 128]
+            decoder_feature_dim: [128, 128, 256, 256, 512]
             include_grouper: false
             decoder_mlp_depth: 2
             use_knn_FP: true
@@ -87,7 +87,7 @@ model:
       target: michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule
       params:
         clip_model_version: "facebook/dinov2-large"
-
+    
     dropout: 0.1
     num_decoder_layers_cross_attn: 2
     numpoints: 4096
@@ -96,6 +96,50 @@ model:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar
       params:
         contrast_weight: 0.0
-        chamfer_weight: 0.1
+        chamfer_weight_pc: 0.3
+        chamfer_weight_partial: 0.1
         mse_weight: 0.0
         kl_weight: 0.001
+    
+    optimizer_cfg:
+      optimizer:
+        target: torch.optim.AdamW
+        params:
+          betas: [0.9, 0.99]
+          # eps: 1.e-6
+          lr: 1.e-4 #1.e-3
+          weight_decay: 1.e-2
+      scheduler:
+        target: torch.optim.lr_scheduler.CosineAnnealingLR
+        params:
+          T_max: 500
+          eta_min: 0.0
+          last_epoch: -1
+
+data:
+  data_dir: "~/Documents/datasets/ShapeNetViPC-Dataset"
+  num_workers: 2
+  view_align: true
+  category: "plane"
+  mini: true
+  image_size: 224
+
+
+# training params
+batch_size: 4
+strategy: ddp #ddp_find_unused_parameters_false
+devices: 1
+max_epochs: 500
+use_ckpt: false
+use_swa: true
+use_lr_finder: false
+max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
+log_every_n_steps: 100
+accumulate_grad_batches: 4
+gradient_clip_val: 0.5
+check_val_every_n_epoch: 30  # Run validation once per 5 epochs
+fast_dev_run: false
+limit_train_batches: null
+limit_val_batches: null
+overfit_batches: 1
+resume_from_ckpt: null

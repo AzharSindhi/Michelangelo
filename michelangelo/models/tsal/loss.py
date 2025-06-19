@@ -229,7 +229,8 @@ class PointCloudMSELoss(nn.Module):
 class ContrastKLNearFar(nn.Module):
     def __init__(self,
                  contrast_weight: float = 1.0,
-                 chamfer_weight: float = 0.1,
+                 chamfer_weight_pc: float = 0.1,
+                 chamfer_weight_partial: float = 0.1,
                  mse_weight: float = 0.1,
                  kl_weight: float = 1.0,
                  num_near_samples: Optional[int] = None):
@@ -240,7 +241,8 @@ class ContrastKLNearFar(nn.Module):
         self.last_local_batch_size = None
 
         self.contrast_weight = contrast_weight
-        self.chamfer_weight = chamfer_weight
+        self.chamfer_weight_pc = chamfer_weight_pc
+        self.chamfer_weight_partial = chamfer_weight_partial
         self.kl_weight = kl_weight
         self.mse_weight = mse_weight
         self.num_near_samples = num_near_samples
@@ -292,7 +294,9 @@ class ContrastKLNearFar(nn.Module):
                 logit_scale: torch.FloatTensor,
                 posteriors: Optional[DiagonalGaussianDistribution],
                 reconstructed_pc: torch.FloatTensor,
+                reconstructed_pc_partial: torch.FloatTensor,
                 gt_pc: torch.FloatTensor,
+                gt_partial: torch.FloatTensor,
                 split: Optional[str] = "train", **kwargs):
 
         local_batch_size = shape_embed.size(0)
@@ -303,7 +307,7 @@ class ContrastKLNearFar(nn.Module):
             ).long()
             self.last_local_batch_size = local_batch_size
 
-        if self.chamfer_weight > 0:
+        if self.contrast_weight > 0:
             contrast_loss = self.calculate_contrastive_loss(shape_embed, text_embed, image_embed, logit_scale)
         else:
             contrast_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
@@ -317,8 +321,13 @@ class ContrastKLNearFar(nn.Module):
         # repeat gt such that it has same number of points
         # shape reconstruction
         dist1, dist2 = self.chamfer_distance(gt_pc, reconstructed_pc)
-        ch_dist = dist1.mean() + dist2.mean()
-        reconst_loss = ch_dist * self.chamfer_weight
+        ch_dist_pc = dist1.mean() + dist2.mean()
+        reconst_loss_pc = ch_dist_pc * self.chamfer_weight_pc
+
+        dist1, dist2 = self.chamfer_distance(gt_partial, reconstructed_pc_partial)
+        ch_dist_partial = dist1.mean() + dist2.mean()
+        reconst_loss_partial = ch_dist_partial * self.chamfer_weight_partial
+
 
         if posteriors is None:
             kl_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
@@ -326,7 +335,7 @@ class ContrastKLNearFar(nn.Module):
             kl_loss = posteriors.kl(dims=(1, 2))
             kl_loss = torch.mean(kl_loss)
 
-        loss = reconst_loss + kl_loss * self.kl_weight + contrast_loss * self.contrast_weight
+        loss = reconst_loss_pc + reconst_loss_partial + kl_loss * self.kl_weight + contrast_loss * self.contrast_weight
 
         # compute accuracy
         with torch.no_grad():
@@ -346,9 +355,9 @@ class ContrastKLNearFar(nn.Module):
                 "{}/total_loss".format(split): loss.clone().detach(),
                 "{}/contrast".format(split): contrast_loss.clone().detach(),
                 "{}/kl".format(split): kl_loss.detach(),
-                # "{}/shape_text_acc".format(split): shape_text_acc,
-                # "{}/shape_image_acc".format(split): shape_image_acc,
-                "{}/reconst_loss".format(split): reconst_loss.detach(),
+                "{}/reconst_loss_pc".format(split): reconst_loss_pc.detach(),
+                "{}/reconst_loss_partial".format(split): reconst_loss_partial.detach(),
+                "{}/contrast_loss".format(split): contrast_loss.detach(),
             }
 
             if posteriors is not None:

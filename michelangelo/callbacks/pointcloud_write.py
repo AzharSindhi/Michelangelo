@@ -40,22 +40,25 @@ class PointCloudSaver(Callback):
         if (trainer.current_epoch + 1) % self.every_n_epochs != 0:
             return
         # pl_module.eval()
-        outputs = pl_module.last_train_output
-        self.save_batch(batch, outputs, "train", trainer.current_epoch)
+        outputs_pc = pl_module.last_train_output_pc
+        outputs_partial = pl_module.last_train_output_pc_partial
+        self.save_batch(batch, outputs_pc, outputs_partial, "train", trainer.current_epoch)
         # pl_module.train()
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx) -> None:
         if (trainer.current_epoch + 1) % self.every_n_epochs != 0:
             return
         # pl_module.eval()
-        outputs = pl_module.last_val_output
-        self.save_batch(batch, outputs, "test", trainer.current_epoch)
+        outputs_pc = pl_module.last_val_output_pc
+        outputs_partial = pl_module.last_val_output_pc_partial
+        self.save_batch(batch, outputs_pc, outputs_partial, "test", trainer.current_epoch)
     
     def on_predict_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
-        outputs = pl_module.last_predict_output
-        self.save_batch(batch, outputs, "predict", trainer.current_epoch)
+        outputs_pc = pl_module.last_predict_output_pc
+        outputs_partial = pl_module.last_predict_output_pc_partial
+        self.save_batch(batch, outputs_pc, outputs_partial, "predict", trainer.current_epoch)
 
-    def save_batch(self, batch, outputs, name, current_epoch):
+    def save_batch(self, batch, outputs_pc, outputs_partial, name, current_epoch):
 
         # Limit number of samples to save
         num_samples = min(self.max_samples, batch["surface"].shape[0])
@@ -74,8 +77,9 @@ class PointCloudSaver(Callback):
         
         # Get original and reconstructed point clouds
         original_pcs = surface[..., :3].cpu().numpy()  # [B, N, 3]
-        reconstructed_pcs = outputs.cpu().numpy()  # [B, N, 3]
+        reconstructed_pcs = outputs_pc.cpu().numpy()  # [B, N, 3]
         incomplete_points = incomplete_points.cpu().numpy()
+        incomplete_points_reconstructed = outputs_partial.cpu().numpy()
         
         # Create directory for this epoch
         epoch_dir = osp.join(self.save_dir, name)#, f"epoch_{current_epoch:04d}")
@@ -98,6 +102,10 @@ class PointCloudSaver(Callback):
             self._save_xyz(
                 incomplete_points[i], 
                 osp.join(epoch_dir, f"partial_{sample_names[i]}_{i:02d}.xyz")
+            )
+            self._save_xyz(
+                incomplete_points_reconstructed[i], 
+                osp.join(epoch_dir, f"rec_partial_{sample_names[i]}_{i:02d}.xyz")
             )
             
             # # Also save as combined file for easier comparison

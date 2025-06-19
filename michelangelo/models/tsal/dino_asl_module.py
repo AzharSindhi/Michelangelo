@@ -24,17 +24,18 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
             self.clip_model = None
 
         self.shape_model = shape_model
-        self.shape_projection = nn.Parameter(torch.empty(self.shape_model.width, self.clip_model.model.config.hidden_size))
+        self.shape_model_width = 1024
+        self.shape_projection = nn.Parameter(torch.empty(self.shape_model_width, self.clip_model.model.config.hidden_size))
         nn.init.normal_(self.shape_projection, std=self.clip_model.model.config.hidden_size ** -0.5)
 
     def set_shape_model_only(self):
         self.clip_model = None
 
-    def encode_shape_embed(self, surface, return_latents: bool = False):
+    def encode_shape_embed(self, complete_pointcloud, return_latents: bool = False):
         """
 
         Args:
-            surface (torch.FloatTensor): [bs, n, 3 + c]
+            complete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
             return_latents (bool):
 
         Returns:
@@ -42,10 +43,7 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
             shape_latents (torch.FloatTensor): [bs, m, d]
         """
 
-        pc = surface[..., 0:3]
-        feats = surface[..., 3:]
-
-        shape_embed, shape_latents = self.shape_model.encode_latents(pc, feats)
+        shape_embed, shape_latents = self.shape_model.encode_latents(complete_pointcloud, return_latents=return_latents)
         x = shape_embed @ self.shape_projection
 
         if return_latents:
@@ -71,11 +69,12 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
     #     x = self.clip_model.encode(text)
     #     return x
 
-    def forward(self, surface, image, text):
+    def forward(self, complete_pointcloud, incomplete_pointcloud, image):
         """
 
         Args:
-            surface (torch.FloatTensor):
+            complete_pointcloud (torch.FloatTensor):
+            incomplete_pointcloud (torch.FloatTensor):
             image (torch.FloatTensor): [bs, 3, 224, 224]
             text (torch.LongTensor): [bs, num_templates, 77]
 
@@ -108,7 +107,7 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
         # image embedding
 
         # shape embedding
-        shape_embed, shape_latents = self.encode_shape_embed(surface, return_latents=True)
+        shape_embed, shape_latents = self.encode_shape_embed(complete_pointcloud, return_latents=True)
         if self.use_contrastive:
             image_embed = self.encode_image_embed(image)
         else:
