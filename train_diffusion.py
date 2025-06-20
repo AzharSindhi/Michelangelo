@@ -79,10 +79,10 @@ def train(args):
     config = OmegaConf.load(config_path)
     if args.use_clip_cond:
         config.model.params.cond_stage_config = config.clip_cond_stage_config
-        # config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
+        config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
     else:
         config.model.params.cond_stage_config = config.dino_cond_stage_config
-        # config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
+        config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
     # run name based on time and process id and prefix
     run_name = f"diff_{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
     git_logger = GitInfoLogger()
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     parser.add_argument("--limit_val_batches", type=float, default=None)
     parser.add_argument("--limit_test_batches", type=float, default=None)
     parser.add_argument("--batch_size", type=int, default=48)
-    parser.add_argument("--max_epochs", type=int, default=500)
+    parser.add_argument("--max_epochs", type=int, default=1000)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     args.run_name = args.run_name + "_diff"

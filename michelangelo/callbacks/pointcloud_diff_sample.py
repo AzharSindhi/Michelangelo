@@ -5,6 +5,28 @@ import numpy as np
 import os.path as osp
 import point_cloud_utils as pcu
 from tqdm import tqdm
+from pytorch3d.loss import chamfer_distance
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self, name=''):
+        self.reset()
+        # name is the name of the quantity that we want to record, used as tag in tensorboard
+        self.name = name
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 class PointCloudSampler(Callback):
     """
@@ -28,8 +50,6 @@ class PointCloudSampler(Callback):
         self.every_n_epochs = every_n_epochs
         os.makedirs(os.path.join(save_dir, "train"), exist_ok=True)
         os.makedirs(os.path.join(save_dir, "test"), exist_ok=True)
-        self.cd_all_test = 0
-        self.hd_all_test = 0
     
     def _save_xyz(self, points: np.ndarray, filename: str):
         """Save point cloud as .xyz file."""
@@ -69,10 +89,7 @@ class PointCloudSampler(Callback):
     def on_predict_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
         self.save_batch(batch, pl_module, "predict", trainer.current_epoch)
         test_chamfer_distance, test_hausdorff_distance = self.calculate_metrics(pl_module, trainer.predict_dataloaders[dataloader_idx])
-        # log to logger
-        self.cd_all_test += test_chamfer_distance
-        self.hd_all_test += test_hausdorff_distance
-
+        
     def save_batch(self, batch, pl_module, name, current_epoch):
 
         # Limit number of samples to save
@@ -149,35 +166,19 @@ class PointCloudSampler(Callback):
                 for k, v in batch.items()}
         return batch
     
-    def calculate_batch_chamfer(self, original_pcs, reconstructed_pcs):
-        chamfer_distance = 0
-        for ori, rec in zip(original_pcs, reconstructed_pcs):
-            cd = pcu.chamfer_distance(rec, ori) + pcu.chamfer_distance(ori, rec)
-            chamfer_distance += cd.item()
-        return chamfer_distance / len(original_pcs)
-    
-    def calculate_batch_hausdorff(self, original_pcs, reconstructed_pcs):
-        hausdorff_distance = 0
-        for ori, rec in zip(original_pcs, reconstructed_pcs):
-            hd = pcu.hausdorff_distance(rec, ori) + pcu.hausdorff_distance(ori, rec)
-            hausdorff_distance += hd.item()
-        return hausdorff_distance / len(original_pcs)
-    
     def calculate_metrics(self, pl_module, dataloader):
-        chamfer_distance = 0
-        hausdorff_distance = 0
+        CD_meter = AverageMeter()
         for batch in tqdm(dataloader, desc="Calculating metrics"):
             batch = self.move_to_device(batch, pl_module.device)
             with torch.no_grad():
                 outputs = pl_module.sample(batch)[-1]
             original_pcs = batch["surface"][..., :3].cpu().numpy()
             reconstructed_pcs = outputs[:, -pl_module.numpoints:, :].cpu().numpy()
-            chamfer_distance += self.calculate_batch_chamfer(original_pcs, reconstructed_pcs)
-            # hausdorff_distance += self.calculate_batch_hausdorff(original_pcs, reconstructed_pcs)
+            cd, _ = chamfer_distance(original_pcs, reconstructed_pcs)
+            batch, numpoints, _ = original_pcs.shape
+            CD_meter.update(cd.item(), n=batch)
         
-        chamfer_distance /= len(dataloader)
-        # hausdorff_distance /= len(dataloader)
-        return chamfer_distance, hausdorff_distance
+        return CD_meter.avg, 0.0
     
     def _save_ply_with_colors(self, original: np.ndarray, reconstructed: np.ndarray, filename: str):
         """Save both point clouds as a single PLY file with different colors."""

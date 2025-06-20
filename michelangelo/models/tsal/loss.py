@@ -9,6 +9,7 @@ from michelangelo.models.modules.distributions import DiagonalGaussianDistributi
 from michelangelo.utils.eval import compute_psnr
 from michelangelo.utils import misc
 from michelangelo.distances.chamfer_distance import ChamferDistance
+from pytorch3d.loss import chamfer_distance
 
 class KLNearFar(nn.Module):
     def __init__(self,
@@ -22,7 +23,6 @@ class KLNearFar(nn.Module):
         self.kl_weight = kl_weight
         self.num_near_samples = num_near_samples
         self.geo_criterion = nn.BCEWithLogitsLoss()
-        self.chamfer_distance = ChamferDistance()
 
     def forward(self,
                 posteriors: Optional[DiagonalGaussianDistribution],
@@ -45,7 +45,7 @@ class KLNearFar(nn.Module):
 
         """
 
-        chamfer_loss = self.chamfer_distance(gt_pc, reconstructed_pc)[0]
+        chamfer_loss, _ = chamfer_distance(gt_pc, reconstructed_pc)
 
         if posteriors is None:
             kl_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
@@ -244,7 +244,6 @@ class ContrastKLNearFar(nn.Module):
         self.kl_weight = kl_weight
         self.mse_weight = mse_weight
         self.num_near_samples = num_near_samples
-        self.chamfer_distance = ChamferDistance()
 
     def calculate_contrastive_loss(self,
                                    shape_embed: torch.FloatTensor,
@@ -316,8 +315,7 @@ class ContrastKLNearFar(nn.Module):
         gt_pc = gt_pc.unsqueeze(1).expand(-1, K, -1, -1).flatten(1, 2)
         # repeat gt such that it has same number of points
         # shape reconstruction
-        dist1, dist2 = self.chamfer_distance(gt_pc, reconstructed_pc)
-        ch_dist = dist1.mean() + dist2.mean()
+        ch_dist, _ = chamfer_distance(gt_pc, reconstructed_pc)
         reconst_loss = ch_dist * self.chamfer_weight
 
         if posteriors is None:
