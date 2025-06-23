@@ -89,14 +89,15 @@ def train(args):
     run_name = f"{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
     git_logger = GitInfoLogger()
     commits_info = git_logger.get_git_info()
-    mlf_logger = MLFlowLogger(experiment_name=args.experiment_name, run_name=run_name, tags=commits_info)
+    git_tags = [f"{key}: {value}" for key, value in commits_info.items()]
+    logger = WandbLogger(project=args.experiment_name, name=run_name, tags=git_tags, config=dict(config))
     # for logging git commits
-    git_logger.log_git_diff(mlf_logger)
-    mlf_logger.log_hyperparams(config)
-    mlf_logger.log_hyperparams(vars(args))
+    git_logger.log_git_diff(logger)
+    logger.log_hyperparams(config)
+    logger.log_hyperparams(vars(args))
 
     # return 
-    print(f"INFO: Run name: {run_name}, run_id: {mlf_logger.run_id}")
+    print(f"INFO: Run name: {run_name}, run_id: {logger.experiment.id}")
     # Initialize model
     ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
     # ignore_keys = []
@@ -148,7 +149,7 @@ def train(args):
     
     # Callbacks
     # mlflow run id
-    dirpath = f"checkpoints_runs/{run_name}_{mlf_logger.run_id}"
+    dirpath = f"checkpoints_runs/{run_name}_{logger.experiment.id}"
     print(f"INFO: Checkpoints directory: {dirpath}")
     checkpoint_callback = ModelCheckpoint(
         monitor='val/total_loss',
@@ -160,11 +161,11 @@ def train(args):
     )
     
     lr_monitor = LearningRateMonitor(logging_interval='step')
-    print(f"INFO: Visualization directory: out_pointclouds/{run_name}_{mlf_logger.run_id}")
+    print(f"INFO: Visualization directory: out_pointclouds/{run_name}_{logger.experiment.id}")
 
     # Point cloud saver callback
     pc_saver = PointCloudSaver(
-        save_dir=f"out_pointclouds/{run_name}_{mlf_logger.run_id}",
+        save_dir=f"out_pointclouds/{run_name}_{logger.experiment.id}",
         max_samples=2,  # Number of samples to save per epoch
         every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
     )
@@ -185,7 +186,7 @@ def train(args):
         log_every_n_steps=config.log_every_n_steps,
         accumulate_grad_batches=config.accumulate_grad_batches,
         gradient_clip_val=config.gradient_clip_val,
-        logger=mlf_logger,
+        logger=logger,
         check_val_every_n_epoch=config.check_val_every_n_epoch,  # Run validation once per 5 epochs
         fast_dev_run=config.fast_dev_run,
         limit_train_batches=config.limit_train_batches,

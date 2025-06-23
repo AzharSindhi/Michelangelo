@@ -118,7 +118,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
                 "scheduler": scheduler_func,
                 "interval": "epoch",
                 "frequency": 1,
-                "monitor": "train/total_loss"
+                "monitor": "val/total_loss"
             }
             schedulers = [scheduler]
 

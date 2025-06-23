@@ -10,10 +10,10 @@ model:
         point_feats: 3   # normal
         num_freqs: 8
         include_pi: false
-        heads: 8 #12
+        heads: 12
         width: 768
-        num_encoder_layers: 4 #8
-        num_decoder_layers: 8 #16
+        num_encoder_layers: 8
+        num_decoder_layers: 16
         use_ln_post: true
         init_scale: 0.25
         qkv_bias: false
@@ -30,8 +30,8 @@ model:
     loss_cfg:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar
       params:
-        contrast_weight: 0.0 #0.1
-        chamfer_weight: 0.1
+        contrast_weight: 0.1
+        chamfer_weight: 0.2
         mse_weight: 0.0 #0.2
         # near_weight: 0.1
         kl_weight: 0.001
@@ -42,8 +42,17 @@ model:
         params:
           betas: [0.9, 0.99]
           # eps: 1.e-6
-          lr: 1.e-4 #1.e-3
+          lr: 1.e-3
           weight_decay: 1.e-2
+      
+      scheduler:
+        target: torch.optim.lr_scheduler.ReduceLROnPlateau
+        params:
+          mode: 'min'
+          factor: 0.1
+          patience: 10
+          min_lr: 1e-6
+          eps: 1e-08
 
       # scheduler:
       #   target: torch.optim.lr_scheduler.CosineAnnealingLR
