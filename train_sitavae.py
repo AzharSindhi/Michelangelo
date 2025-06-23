@@ -23,6 +23,7 @@ from pytorch_lightning.tuner import lr_finder
 import time
 import argparse
 from michelangelo.callbacks.logger_callbacks import GitInfoLogger
+from pytorch_lightning.loggers.wandb import WandbLogger
 
 class ShapeNetViPCDataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int = 4, num_workers: int = 4,
@@ -179,7 +180,7 @@ def train(args):
     trainer = pl.Trainer(
         max_epochs=config.max_epochs,
         accelerator="gpu",
-        gpus=config.gpus,
+        devices=config.devices,
         strategy=config.strategy,
         callbacks=callbacks,
         enable_model_summary=True,

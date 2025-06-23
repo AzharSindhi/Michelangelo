@@ -8,7 +8,6 @@ from typing import Optional, Tuple, Dict
 from michelangelo.models.modules.distributions import DiagonalGaussianDistribution
 from michelangelo.utils.eval import compute_psnr
 from michelangelo.utils import misc
-from michelangelo.distances.chamfer_distance import ChamferDistance
 from pytorch3d.loss import chamfer_distance
 
 class KLNearFar(nn.Module):
