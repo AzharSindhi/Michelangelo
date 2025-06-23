@@ -210,8 +210,8 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_name", "-r",type=str, default="scratch")
-    parser.add_argument("--experiment_name", "-e",type=str, default="lightning_logs")
+    parser.add_argument("--run_name", "-r",type=str, default="test")
+    parser.add_argument("--experiment_name", "-e",type=str, default="pointnetvae")
     parser.add_argument("--use_clip_cond", "-c", action="store_true")
     parser.add_argument("--use_contrastive", action="store_true")
     args = parser.parse_args()
