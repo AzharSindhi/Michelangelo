@@ -24,8 +24,8 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
             self.clip_model = None
 
         self.shape_model = shape_model
-        self.shape_projection = nn.Parameter(torch.empty(self.shape_model.width, self.clip_model.model.config.hidden_size))
-        nn.init.normal_(self.shape_projection, std=self.clip_model.model.config.hidden_size ** -0.5)
+        self.shape_projection = nn.Parameter(torch.empty(self.shape_model.width, self.clip_model.model.config.vision_config.hidden_size))
+        nn.init.normal_(self.shape_projection, std=self.clip_model.model.config.vision_config.hidden_size ** -0.5)
 
     def set_shape_model_only(self):
         self.clip_model = None

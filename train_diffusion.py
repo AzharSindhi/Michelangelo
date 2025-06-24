@@ -26,6 +26,9 @@ import argparse
 from michelangelo.models.asl_diffusion.clip_asl_diffuser_pl_module import ClipASLDiffuser
 from michelangelo.callbacks.logger_callbacks import GitInfoLogger
 
+torch.set_float32_matmul_precision("medium")
+
+
 class ShapeNetViPCDataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int = 4, num_workers: int = 4,
                  view_align: bool = True, category: str = "plane", mini: bool = True,
@@ -70,17 +73,15 @@ def set_seed(seed=42):
     cudnn.deterministic = True
     os.environ["PYTHONHASHSEED"] = str(seed)
 
-def train(args):
+def train(args, config):
     # seed everything
     set_seed(42)
     
-    # Load config
-    config_path = "configs/image_cond_diffuser_asl/image-ASLDM-256.yaml"
-    config = OmegaConf.load(config_path)
+
     if args.use_clip_cond:
-        config.model.params.first_stage_config.aligned_module_cfg.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
+        config.model.params.first_stage_config.params.aligned_module_cfg.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
     else:
-        config.model.params.first_stage_config.aligned_module_cfg.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
+        config.model.params.first_stage_config.params.aligned_module_cfg.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
     # run name based on time and process id and prefix
     run_name = f"diff_{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
     git_logger = GitInfoLogger()
@@ -99,7 +100,7 @@ def train(args):
     # Setup data
     datamodule = ShapeNetViPCDataModule(
         data_dir=config.data.data_dir,
-        batch_size=config.batch_size,
+        batch_size=args.batch_size,
         num_workers=config.data.num_workers,
         view_align=config.data.view_align,
         category=config.data.category,
@@ -135,7 +136,6 @@ def train(args):
     # Initialize trainer
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
-        accelerator="gpu",
         devices=args.devices,
         strategy=args.strategy,
         callbacks=callbacks,
@@ -149,6 +149,8 @@ def train(args):
         limit_train_batches=args.limit_train_batches,
         limit_val_batches=args.limit_val_batches,
         overfit_batches=args.overfit_batches,
+        precision=config.precision,
+        accelerator=config.accelerator,
     )
 
     if args.use_lr_finder:
@@ -178,15 +180,15 @@ if __name__ == "__main__":
     parser.add_argument("--max_lr", type=float, default=1e-3)
     parser.add_argument("--devices", type=int, default=-1)
     parser.add_argument("--strategy", type=str, default="ddp_find_unused_parameters_false")
-    parser.add_argument("--check_val_every_n_epoch", type=int, default=30)
-    parser.add_argument("--log_every_n_steps", type=int, default=10)
+    parser.add_argument("--check_val_every_n_epoch", type=int, default=50)
+    parser.add_argument("--log_every_n_steps", type=int, default=50)
     parser.add_argument("--accumulate_grad_batches", type=int, default=4)
     parser.add_argument("--gradient_clip_val", type=float, default=0.5)
     parser.add_argument("--limit_train_batches", type=float, default=None)
     parser.add_argument("--limit_val_batches", type=float, default=None)
     parser.add_argument("--limit_test_batches", type=float, default=None)
-    parser.add_argument("--batch_size", type=int, default=48)
-    parser.add_argument("--max_epochs", type=int, default=1000)
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--max_epochs", type=int, default=2000)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     args.run_name = args.run_name + "_diff"
@@ -206,4 +208,7 @@ if __name__ == "__main__":
         args.run_name += "_debug"
         args.experiment_name = "debug"
 
-    train(args)
+    # Load config
+    config_path = "configs/image_cond_diffuser_asl/image-ASLDM-256.yaml"
+    config = OmegaConf.load(config_path)
+    train(args, config)

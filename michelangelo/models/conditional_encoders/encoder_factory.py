@@ -574,7 +574,10 @@ class DinoImageEmbedder(nn.Module):
         for param in self.model.parameters():
             param.requires_grad = False
         
-        self.patch_size = self.model.config.patch_size
+        if hasattr(self.model.config, "vision_config"):
+            self.patch_size = self.model.config.vision_config.patch_size
+        else:
+            self.patch_size = self.model.config.patch_size
         self.zero_embedding_radio = zero_embedding_radio
         self.image_size = image_size
         self.logit_scale = 1.0

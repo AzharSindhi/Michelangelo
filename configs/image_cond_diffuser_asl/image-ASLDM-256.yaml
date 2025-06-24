@@ -66,7 +66,7 @@ model:
 
     scheduler_cfg:
       guidance_scale: 7.5
-      num_inference_steps: 50
+      num_inference_steps: 100
       eta: 0.0
 
       noise:
@@ -131,8 +131,6 @@ clip_cond_stage_config:
     zero_embedding_radio: 0.1
     image_size: 224
 
-# training params
-batch_size: 48
 max_epochs: 500
 strategy: ddp_find_unused_parameters_false
 devices: -1
@@ -140,7 +138,9 @@ use_ckpt: false
 use_swa: false
 use_lr_finder: false
 max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
-log_every_n_steps: 10
+precision: "16"
+accelerator: "gpu"
+log_every_n_steps: 50
 accumulate_grad_batches: 4
 gradient_clip_val: 0.5
 check_val_every_n_epoch: 30  # Run validation once per 5 epochs

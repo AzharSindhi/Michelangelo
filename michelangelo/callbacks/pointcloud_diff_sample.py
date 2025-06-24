@@ -171,8 +171,8 @@ class PointCloudSampler(Callback):
             batch = self.move_to_device(batch, pl_module.device)
             with torch.no_grad():
                 outputs = pl_module.sample(batch)[-1]
-            original_pcs = batch["surface"][..., :3].cpu().numpy()
-            reconstructed_pcs = outputs[:, -pl_module.numpoints:, :].cpu().numpy()
+            original_pcs = batch["surface"][..., :3].cpu()
+            reconstructed_pcs = outputs[:, -pl_module.numpoints:, :].cpu()
             cd, _ = chamfer_distance(original_pcs, reconstructed_pcs)
             batch, numpoints, _ = original_pcs.shape
             CD_meter.update(cd.item(), n=batch)
