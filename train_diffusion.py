@@ -78,11 +78,9 @@ def train(args):
     config_path = "configs/image_cond_diffuser_asl/image-ASLDM-256.yaml"
     config = OmegaConf.load(config_path)
     if args.use_clip_cond:
-        config.model.params.cond_stage_config = config.clip_cond_stage_config
-        config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
+        config.model.params.first_stage_config.aligned_module_cfg.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
     else:
-        config.model.params.cond_stage_config = config.dino_cond_stage_config
-        config.model.params.aligned_module_cfg.params.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
+        config.model.params.first_stage_config.aligned_module_cfg.target = "michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule"
     # run name based on time and process id and prefix
     run_name = f"diff_{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
     git_logger = GitInfoLogger()
@@ -171,7 +169,7 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_name", "-r",type=str, default="scratch")
-    parser.add_argument("--experiment_name", "-e", type=str, default="lightning_logs")
+    parser.add_argument("--experiment_name", "-e", type=str, default="sita_diffusion")
     parser.add_argument("--use_clip_cond", action="store_true")
     parser.add_argument("--overfit_batches", type=float, default=0.0)
     parser.add_argument("--fast_dev_run", action="store_true")

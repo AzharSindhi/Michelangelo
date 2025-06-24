@@ -3,7 +3,6 @@ import os
 import torch
 import numpy as np
 import os.path as osp
-import point_cloud_utils as pcu
 from tqdm import tqdm
 from pytorch3d.loss import chamfer_distance
 

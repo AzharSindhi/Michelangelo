@@ -216,6 +216,9 @@ if __name__ == "__main__":
     parser.add_argument("--experiment_name", "-e",type=str, default="lightning_logs")
     parser.add_argument("--use_clip_cond", "-c", action="store_true")
     parser.add_argument("--use_contrastive", action="store_true")
+    parser.add_argument("--check_val_every_n_epoch", type=int, default=5)
+    parser.add_argument("--overfit_batches", type=int, default=0)
+    parser.add_argument("--fast_dev_run", action="store_true")
     args = parser.parse_args()
     if args.use_clip_cond:
         args.run_name += "_clip"
