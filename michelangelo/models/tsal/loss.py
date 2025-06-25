@@ -321,7 +321,7 @@ class ContrastKLNearFar(nn.Module):
         ch_dist_pc, _ = chamfer_distance(gt_pc, reconstructed_pc)
         reconst_loss_pc = ch_dist_pc * self.chamfer_weight_pc
 
-        ch_dist_partial, _ = chamfer_distance(gt_partial, reconstructed_pc_partial)
+        ch_dist_partial, _ = chamfer_distance(gt_partial, reconstructed_pc) # also make it predict full point cloud
         reconst_loss_partial = ch_dist_partial * self.chamfer_weight_partial
 
 
