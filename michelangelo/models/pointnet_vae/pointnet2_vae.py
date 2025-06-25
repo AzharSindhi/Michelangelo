@@ -374,23 +374,23 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         # if first conv, first conv in_fea_dim + encoder_feature_map_dim[0] -> feature_dim[0]
         # if not first conv, mlp[0] = in_fea_dim + encoder_feature_map_dim[0]
         additional_fea_dim = encoder_feature_map_dim if(self.include_local_feature and self.map_type == "map_feature") else None
-        self.SA_modules = self.build_SA_model(
-            npoint,
-            radius,
-            nsample,
-            feature_dim,
-            mlp_depth,
-            in_fea_dim+encoder_feature_map_dim[0] if(self.include_local_feature and self.map_type == "map_feature") else in_fea_dim,
-            self.hparams['include_t'],
-            self.hparams["include_class_condition"],
-            include_global_feature=self.include_global_feature,
-            global_feature_dim=self.global_feature_dim,
-            additional_fea_dim = additional_fea_dim,
-            neighbor_def=arch['neighbor_definition'],
-            activation=self.network_activation,
-            bn=self.bn,
-            attention_setting=self.attention_setting,
-            global_attention_setting=self.global_attention_setting)
+        # self.SA_modules = self.build_SA_model(
+        #     npoint,
+        #     radius,
+        #     nsample,
+        #     feature_dim,
+        #     mlp_depth,
+        #     in_fea_dim+encoder_feature_map_dim[0] if(self.include_local_feature and self.map_type == "map_feature") else in_fea_dim,
+        #     self.hparams['include_t'],
+        #     self.hparams["include_class_condition"],
+        #     include_global_feature=self.include_global_feature,
+        #     global_feature_dim=self.global_feature_dim,
+        #     additional_fea_dim = additional_fea_dim,
+        #     neighbor_def=arch['neighbor_definition'],
+        #     activation=self.network_activation,
+        #     bn=self.bn,
+        #     attention_setting=self.attention_setting,
+        #     global_attention_setting=self.global_attention_setting)
 
         if self.include_local_feature:
             # build FP module for condition cloud
@@ -430,27 +430,27 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         additional_fea_dim = decoder_feature_map_dim[1:] if(self.include_local_feature and self.map_type == "map_feature") else None
         # module_use_xyz = self.hparams.get("model.use_xyz", True)
         # use_attention_module = self.attention_setting.get("use_attention_module", True)
-        self.FP_modules = self.build_FP_model(
-            decoder_feature_dim,
-            decoder_mlp_depth,
-            feature_dim,
-            in_fea_dim,
-            self.hparams['include_t'],
-            self.hparams["include_class_condition"],
-            include_global_feature=self.include_global_feature,
-            global_feature_dim=self.global_feature_dim,
-            additional_fea_dim=additional_fea_dim,
-            use_knn_FP=use_knn_FP,
-            K=K,
-            include_grouper = include_grouper,
-            radius=radius,
-            nsample=nsample,
-            neighbor_def=arch['neighbor_definition'],
-            activation=self.network_activation,
-            bn=self.bn,
-            attention_setting=self.attention_setting,
-            global_attention_setting=self.global_attention_setting
-        )
+        # self.FP_modules = self.build_FP_model(
+        #     decoder_feature_dim,
+        #     decoder_mlp_depth,
+        #     feature_dim,
+        #     in_fea_dim,
+        #     self.hparams['include_t'],
+        #     self.hparams["include_class_condition"],
+        #     include_global_feature=self.include_global_feature,
+        #     global_feature_dim=self.global_feature_dim,
+        #     additional_fea_dim=additional_fea_dim,
+        #     use_knn_FP=use_knn_FP,
+        #     K=K,
+        #     include_grouper = include_grouper,
+        #     radius=radius,
+        #     nsample=nsample,
+        #     neighbor_def=arch['neighbor_definition'],
+        #     activation=self.network_activation,
+        #     bn=self.bn,
+        #     attention_setting=self.attention_setting,
+        #     global_attention_setting=self.global_attention_setting
+        # )
         # set back
         # self.hparams["model.use_xyz"] = module_use_xyz
         # self.attention_setting["use_attention_module"] = use_attention_module
@@ -696,11 +696,10 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         
         return l_cond_features
     
-    def encode_latents(self, complete_pointcloud, incomplete_pointcloud, return_latents: bool = False):
+    def encode_latents(self, incomplete_pointcloud, return_latents: bool = False):
         """
 
         Args:
-            complete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
             incomplete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
         Returns:
             x (torch.FloatTensor): [bs, projection_dim]
@@ -708,12 +707,12 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         """
 
         # Prepare inputs and get initial features
-        xyz, feats, i_pc = self._prepare_pc_inputs(complete_pointcloud)
+        # xyz, feats, i_pc = self._prepare_pc_inputs(complete_pointcloud)
         uvw, cond_feats = self._prepare_condition_inputs(incomplete_pointcloud)
-        global_feature = self._get_global_condition_embedding(i_pc)
+        global_feature = self._get_global_condition_embedding(uvw)
 
         # Encode
-        l_xyz, l_features = self.encode_main(xyz, feats, condition_emb=global_feature)
+        # l_xyz, l_features = self.encode_main(xyz, feats, condition_emb=global_feature)
         l_xyz_cond, l_cond_features = self.encode_cond(uvw, cond_feats)
 
         # bidirectional cross attention
@@ -722,16 +721,16 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         #     queries_encoder=l_features[-1].permute(0, 2, 1)
         # ).permute(0, 2, 1).contiguous()
 
-        l_cond_features[-1] = self.att_c(
-            l_features[-1].permute(0, 2, 1),
-            queries_encoder=l_cond_features[-1].permute(0, 2, 1)
-        ).permute(0, 2, 1).contiguous()
+        # l_cond_features[-1] = self.att_c(
+        #     l_features[-1].permute(0, 2, 1),
+        #     queries_encoder=l_cond_features[-1].permute(0, 2, 1)
+        # ).permute(0, 2, 1).contiguous()
         
-        l_features_out = self.decode_main(l_xyz, l_features, condition_emb=global_feature)[0]
+        # l_features_out = self.decode_main(l_xyz, l_features, condition_emb=global_feature)[0]
         l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
 
-        out_feature = torch.cat([l_features_out.transpose(1,2), uvw, incomplete_pointcloud], dim=-1)
-        out = self.fc_layer_noise(out_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
+        # out_feature = torch.cat([l_features_out.transpose(1,2), uvw, incomplete_pointcloud], dim=-1)
+        # out = self.fc_layer_noise(out_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
         
         out_cond_feature = torch.cat([l_cond_features_out.transpose(1,2), uvw, incomplete_pointcloud], dim=-1)
         out_partial = self.fc_layer_c(out_cond_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
@@ -739,7 +738,7 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
 
         # transpose to [bs, m, d]
         if return_latents:
-            return global_feature, out, out_partial
+            return global_feature, out_partial
         else:
             return global_feature
 
@@ -765,18 +764,17 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
         return l_cond_features_out.permute(0, 2, 1)
 
-    def decode(self, out: torch.FloatTensor, out_partial: torch.FloatTensor, incomplete_pointcloud: torch.FloatTensor):
-        return out, out_partial
+    def decode(self, out_partial: torch.FloatTensor):
+        return out_partial
     
     def forward(
             self,
-            complete_pointcloud,
             incomplete_pointcloud,
             image=None,
     ):
         # Prepare inputs and get initial features
         xyz, feats, uvw, cond_feats, i_pc = self._prepare_inputs(
-            complete_pointcloud, incomplete_pointcloud
+            incomplete_pointcloud
         )
         
         # Encode

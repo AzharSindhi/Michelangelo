@@ -129,7 +129,7 @@ data:
 
 
 # training params
-batch_size: 16
+batch_size: 32
 strategy: ddp #ddp_find_unused_parameters_false
 devices: -1
 max_epochs: 2000

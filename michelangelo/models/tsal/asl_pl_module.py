@@ -125,15 +125,13 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         return [optimizer], [scheduler]
 
     def forward(self,
-                surface: torch.FloatTensor,
+                incomplete_points: torch.FloatTensor,
                 image: torch.FloatTensor,
-                text: torch.FloatTensor,
-                incomplete_points: torch.FloatTensor):
+                text: torch.FloatTensor):
 
         """
 
         Args:
-            surface (torch.FloatTensor):
             incomplete_points (torch.FloatTensor):
             image (torch.FloatTensor):
             text (torch.FloatTensor):
@@ -146,11 +144,11 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         """
 
         posterior = None
-        embed_outputs, complete_shape_zq, partial_shape_zq = self.model(surface, incomplete_points, image)
-        # shape_zq, posterior = self.model.shape_model.encode_kl_embed(shape_zq)
-        recon_pc, recon_pc_partial = self.model.shape_model.decode(complete_shape_zq, partial_shape_zq, incomplete_points)
+        text = None
+        embed_outputs, partial_shape_zq = self.model(incomplete_points, image, text)
+        recon_pc_partial = self.model.shape_model.decode(partial_shape_zq)
         
-        return embed_outputs, recon_pc, recon_pc_partial, posterior
+        return embed_outputs, recon_pc_partial, posterior
 
     def encode(self, surface: torch.FloatTensor, sample_posterior=True):
 
@@ -184,10 +182,9 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
         Args:
             batch (dict): the batch sample, and it contains:
-                - surface (torch.FloatTensor): [bs, n_surface, (3 + input_dim)]
+                - incomplete_points (torch.FloatTensor): [bs, n_pts, (3 + 1)]
                 - image (torch.FloatTensor): [bs, 3, 224, 224]
                 - text (torch.FloatTensor): [bs, num_templates, 77]
-                - geo_points (torch.FloatTensor): [bs, n_pts, (3 + 1)]
 
             batch_idx (int):
 
@@ -198,85 +195,71 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
 
         """
 
-        surface = batch["surface"]
-        image = batch["image"]
-        text = batch["text"]
-
+        surface = batch["surface"][..., 0:3]
         incomplete_points = batch["incomplete_points"][..., 0:3]
-        # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1]) #batch["geo_points"][..., -1]
+        image = batch["image"]
+        text = None #batch["text"]
 
-        embed_outputs, reconstructed_pc, reconstructed_pc_partial, posteriors = self(surface, image, text, incomplete_points)
+        embed_outputs, reconstructed_pc_partial, posteriors = self(incomplete_points, image, text)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
-            reconstructed_pc=reconstructed_pc,
-            reconstructed_pc_partial=reconstructed_pc_partial,
+            reconstructed_pc=reconstructed_pc_partial,
             gt_pc=surface[..., :3],
-            gt_partial=incomplete_points,
             split="train"
         )
 
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
+        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc_partial.shape[0],
                       sync_dist=True, on_step=False, on_epoch=True)
 
-        self.last_train_output_pc = reconstructed_pc.detach().clone().cpu()
-        self.last_train_output_pc_partial = reconstructed_pc_partial.detach().clone().cpu()
+        self.last_train_output_pc = reconstructed_pc_partial.detach().clone().cpu()
 
         return aeloss
 
     def validation_step(self, batch: Dict[str, torch.FloatTensor], batch_idx: int) -> torch.FloatTensor:
 
-        surface = batch["surface"]
-        image = batch["image"]
-        text = batch["text"]
-
+        surface = batch["surface"][..., 0:3]
         incomplete_points = batch["incomplete_points"][..., 0:3]
-        # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
+        image = batch["image"]
+        text = None #batch["text"]
 
-        embed_outputs, reconstructed_pc, reconstructed_pc_partial, posteriors = self(surface, image, text, incomplete_points)
+        embed_outputs, reconstructed_pc_partial, posteriors = self(incomplete_points, image, text)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
-            reconstructed_pc=reconstructed_pc,
-            reconstructed_pc_partial=reconstructed_pc_partial,
+            reconstructed_pc=reconstructed_pc_partial,
             gt_pc=surface[..., :3],
-            gt_partial=incomplete_points,
             split="val"
         )
-        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
+        self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc_partial.shape[0],
                       sync_dist=True, on_step=False, on_epoch=True)
 
-        self.last_val_output_pc = reconstructed_pc.detach().clone().cpu()
-        self.last_val_output_pc_partial = reconstructed_pc_partial.detach().clone().cpu()
+        self.last_val_output_pc = reconstructed_pc_partial.detach().clone().cpu()
 
         return aeloss
     
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):
-        surface = batch["surface"]
-        image = batch["image"]
-        text = batch["text"]
-
+        surface = batch["surface"][..., 0:3]
         incomplete_points = batch["incomplete_points"][..., 0:3]
+        image = batch["image"]
+        text = None #batch["text"]
         # shape_labels = torch.zeros_like(batch["incomplete_points"][..., -1])#batch["geo_points"][..., -1]
 
-        embed_outputs, reconstructed_pc, reconstructed_pc_partial, posteriors = self(surface, image, text, incomplete_points)
+        embed_outputs, reconstructed_pc_partial, posteriors = self(incomplete_points, image, text)
 
         aeloss, log_dict_ae = self.loss(
             **embed_outputs,
             posteriors=posteriors,
-            reconstructed_pc=reconstructed_pc,
-            reconstructed_pc_partial=reconstructed_pc_partial,
+            reconstructed_pc=reconstructed_pc_partial,
             gt_pc=surface[..., :3],
-            gt_partial=incomplete_points,
             split="val"
         )
         # self.log_dict(log_dict_ae, prog_bar=True, logger=True, batch_size=reconstructed_pc.shape[0],
         #               sync_dist=True, on_step=False, on_epoch=True)
 
-        self.last_predict_output_pc = reconstructed_pc.detach().clone().cpu()
-        self.last_predict_output_pc_partial = reconstructed_pc_partial.detach().clone().cpu()
+        self.last_predict_output_pc = reconstructed_pc_partial.detach().clone().cpu()
 
         return aeloss
     
@@ -310,7 +293,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         device = surface.device
         bs = surface.shape[0]
 
-        embed_outputs, shape_z = self.model(surface, image, text)
+        embed_outputs, shape_z = self.model(incomplete_points, image, text)
 
         # calculate the similarity
         image_embed = embed_outputs["image_embed"]

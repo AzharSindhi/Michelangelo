@@ -292,9 +292,7 @@ class ContrastKLNearFar(nn.Module):
                 logit_scale: torch.FloatTensor,
                 posteriors: Optional[DiagonalGaussianDistribution],
                 reconstructed_pc: torch.FloatTensor,
-                reconstructed_pc_partial: torch.FloatTensor,
                 gt_pc: torch.FloatTensor,
-                gt_partial: torch.FloatTensor,
                 split: Optional[str] = "train", **kwargs):
 
         local_batch_size = shape_embed.size(0)
@@ -321,9 +319,6 @@ class ContrastKLNearFar(nn.Module):
         ch_dist_pc, _ = chamfer_distance(gt_pc.float(), reconstructed_pc.float())
         reconst_loss_pc = ch_dist_pc * self.chamfer_weight_pc
 
-        ch_dist_partial, _ = chamfer_distance(gt_partial.float(), reconstructed_pc.float()) # also make it predict full point cloud
-        reconst_loss_partial = ch_dist_partial * self.chamfer_weight_partial
-
 
         if posteriors is None:
             kl_loss = torch.tensor(0.0, dtype=reconstructed_pc.dtype, device=reconstructed_pc.device)
@@ -331,7 +326,7 @@ class ContrastKLNearFar(nn.Module):
             kl_loss = posteriors.kl(dims=(1, 2))
             kl_loss = torch.mean(kl_loss)
 
-        loss = reconst_loss_pc + reconst_loss_partial + kl_loss * self.kl_weight + contrast_loss * self.contrast_weight
+        loss = reconst_loss_pc + kl_loss * self.kl_weight + contrast_loss * self.contrast_weight
 
         # compute accuracy
         with torch.no_grad():
@@ -352,7 +347,6 @@ class ContrastKLNearFar(nn.Module):
                 "{}/contrast".format(split): contrast_loss.clone().detach(),
                 "{}/kl".format(split): kl_loss.detach(),
                 "{}/reconst_loss_pc".format(split): reconst_loss_pc.detach(),
-                "{}/reconst_loss_partial".format(split): reconst_loss_partial.detach(),
                 "{}/contrast_loss".format(split): contrast_loss.detach(),
             }
 

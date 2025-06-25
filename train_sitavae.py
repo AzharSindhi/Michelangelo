@@ -230,7 +230,7 @@ if __name__ == "__main__":
     parser.add_argument("--experiment_name", "-e",type=str, default="pointnetvae")
     parser.add_argument("--use_clip_cond", "-c", action="store_true")
     parser.add_argument("--no_contrastive", action="store_true")
-    parser.add_argument("--batch_size", "-b", type=int, default=16)
+    parser.add_argument("--batch_size", "-b", type=int, default=32)
     parser.add_argument("--overfit_batches", "-o", type=int, default=0)
     parser.add_argument("--check_val_every_n_epoch", "-v", type=int, default=50)
     args = parser.parse_args()

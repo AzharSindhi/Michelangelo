@@ -31,11 +31,10 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
     def set_shape_model_only(self):
         self.clip_model = None
 
-    def encode_shape_embed(self, complete_pointcloud, incomplete_pointcloud, return_latents: bool = False):
+    def encode_shape_embed(self, incomplete_pointcloud, return_latents: bool = False):
         """
 
         Args:
-            complete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
             incomplete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
             return_latents (bool):
 
@@ -44,11 +43,11 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
             shape_latents (torch.FloatTensor): [bs, m, d]
         """
 
-        shape_embed, shape_latents_full, shape_latents_partial = self.shape_model.encode_latents(complete_pointcloud, incomplete_pointcloud, return_latents=return_latents)
+        shape_embed, shape_latents_partial = self.shape_model.encode_latents(incomplete_pointcloud, return_latents=return_latents)
         x = shape_embed @ self.shape_projection
 
         if return_latents:
-            return x, shape_latents_full, shape_latents_partial
+            return x, shape_latents_partial
         else:
             return x
 
@@ -70,12 +69,11 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
     #     x = self.clip_model.encode(text)
     #     return x
 
-    def forward(self, complete_pointcloud, incomplete_pointcloud, image):
+    def forward(self, incomplete_pointcloud, image, text):
         """
 
         Args:
-            complete_pointcloud (torch.FloatTensor):
-            incomplete_pointcloud (torch.FloatTensor):
+            incomplete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
             image (torch.FloatTensor): [bs, 3, 224, 224]
             text (torch.LongTensor): [bs, num_templates, 77]
 
@@ -108,7 +106,7 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
         # image embedding
 
         # shape embedding
-        shape_embed, shape_latents_full, shape_latents_partial = self.encode_shape_embed(complete_pointcloud, incomplete_pointcloud, return_latents=True)
+        shape_embed, shape_latents_partial = self.encode_shape_embed(incomplete_pointcloud, return_latents=True)
         if self.use_contrastive:
             image_embed = self.encode_image_embed(image)
         else:
@@ -121,4 +119,4 @@ class DinoAlignedShapeAsLatentModule(AlignedShapeAsLatentModule):
             "logit_scale": 1.0 #self.clip_model.logit_scale#.exp()
         }
 
-        return embed_outputs, shape_latents_full, shape_latents_partial
+        return embed_outputs, shape_latents_partial
