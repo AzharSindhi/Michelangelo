@@ -694,12 +694,12 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         
         return l_cond_features
     
-    def encode_latents(self, complete_pointcloud, return_latents: bool = False):
+    def encode_latents(self, complete_pointcloud, incomplete_pointcloud, return_latents: bool = False):
         """
 
         Args:
             complete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
-
+            incomplete_pointcloud (torch.FloatTensor): [bs, n, 3 + c]
         Returns:
             x (torch.FloatTensor): [bs, projection_dim]
             shape_latents (torch.FloatTensor): [bs, m, d]
@@ -707,14 +707,19 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
 
         # Prepare inputs and get initial features
         xyz, feats, i_pc = self._prepare_pc_inputs(complete_pointcloud)
+        uvw, cond_feats = self._prepare_condition_inputs(incomplete_pointcloud)
         global_feature = self._get_global_condition_embedding(i_pc)
 
         # Encode
         l_xyz, l_features = self.encode_main(xyz, feats, condition_emb=global_feature)
         l_features_out = self.decode_main(l_xyz, l_features, condition_emb=global_feature)[0]
+        
+        l_xyz_cond, l_cond_features = self.encode_cond(uvw, cond_feats)
+        l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
+
         # transpose to [bs, m, d]
         if return_latents:
-            return global_feature, l_features_out.permute(0, 2, 1)
+            return global_feature, l_features_out.permute(0, 2, 1), l_cond_features_out.permute(0, 2, 1)
         else:
             return global_feature
 
@@ -732,24 +737,26 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
             kl_embed = latents
 
         return kl_embed, posterior
-
-    def decode(self, out_feature: List[torch.FloatTensor], incomplete_pointcloud: torch.FloatTensor):
+    
+    def get_cond_features(self, incomplete_pointcloud):
         uvw, cond_feats = self._prepare_condition_inputs(incomplete_pointcloud)
+        global_feature = self._get_global_condition_embedding(incomplete_pointcloud)
+        l_xyz_cond, l_cond_features = self.encode_cond(uvw, cond_feats)
+        l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
+        return l_cond_features_out.permute(0, 2, 1)
+
+    def decode(self, out_feature: List[torch.FloatTensor], l_cond_feature: List[torch.FloatTensor], incomplete_pointcloud: torch.FloatTensor):
+        uvw, _ = self._prepare_condition_inputs(incomplete_pointcloud)
         # l_xyz_cond, l_cond_features = self.encode_cond(
         #     uvw, cond_feats,
         # )
 
         # cond_embed = self._get_global_condition_embedding(incomplete_pointcloud)
 
-        # cond_out_features = self.decode_cond(
-        #     l_xyz_cond, l_cond_features
-        # )
         # Process outputs
         out_feature = torch.cat([out_feature, uvw, incomplete_pointcloud], dim=-1)
         out = self.fc_layer_noise(out_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
-        
-        # cond_out_feature = torch.cat([cond_out_feature.transpose(1,2), uvw, incomplete_pointcloud], dim=-1).permute(0,2,1)
-        out_partial = torch.zeros_like(out)#self.fc_layer_c(cond_out_feature).permute(0,2,1) # reconstructed output
+        out_partial = self.fc_layer_c(l_cond_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
 
         return out, out_partial
     

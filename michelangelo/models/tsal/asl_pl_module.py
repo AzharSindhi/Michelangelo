@@ -146,9 +146,9 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         """
 
         posterior = None
-        embed_outputs, shape_zq = self.model(surface, incomplete_points, image)
+        embed_outputs, complete_shape_zq, partial_shape_zq = self.model(surface, incomplete_points, image)
         # shape_zq, posterior = self.model.shape_model.encode_kl_embed(shape_zq)
-        recon_pc, recon_pc_partial = self.model.shape_model.decode(shape_zq, incomplete_points)
+        recon_pc, recon_pc_partial = self.model.shape_model.decode(complete_shape_zq, partial_shape_zq, incomplete_points)
         
         return embed_outputs, recon_pc, recon_pc_partial, posterior
 
