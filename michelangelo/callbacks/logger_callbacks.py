@@ -46,7 +46,7 @@ class GitInfoLogger(Callback):
         # Basic Git info
         commit_info = {
             "git_commit_id": head_commit.hexsha,
-            "git_commit_message": head_commit.message.strip(),
+            "git_commit_message": head_commit.message.strip()[:30],
             "git_commit_author": f"{head_commit.author.name} <{head_commit.author.email}>",
             "git_commit_date": datetime.fromtimestamp(head_commit.committed_date).isoformat(),
             "git_branch": self.repo.active_branch.name if not self.repo.head.is_detached else "DETACHED_HEAD",
@@ -126,7 +126,7 @@ class GitInfoLogger(Callback):
                 wandb_html = wandb.Html("\n".join(self.html))
                 logger.experiment.log({"git_diff": wandb_html})
         
-        print("MLflow run completed with Git metadata.")
+        print("Wandb run completed with Git metadata.")
 
     def on_train_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         logger = pl_module.logger

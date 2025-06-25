@@ -87,6 +87,7 @@ model:
       target: michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule
       params:
         clip_model_version: "facebook/dinov2-large"
+        use_contrastive: true
     
     dropout: 0.1
     num_decoder_layers_cross_attn: 2
@@ -95,7 +96,7 @@ model:
     loss_cfg:
       target: michelangelo.models.tsal.loss.ContrastKLNearFar
       params:
-        contrast_weight: 0.0
+        contrast_weight: 0.1
         chamfer_weight_pc: 0.3
         chamfer_weight_partial: 0.1
         mse_weight: 0.0
@@ -110,15 +111,17 @@ model:
           lr: 1.e-4 #1.e-3
           weight_decay: 1.e-2
       scheduler:
-        target: torch.optim.lr_scheduler.CosineAnnealingLR
+        target: torch.optim.lr_scheduler.ReduceLROnPlateau
         params:
-          T_max: 500
-          eta_min: 0.0
-          last_epoch: -1
+          mode: "min"
+          factor: 0.1
+          patience: 10
+          cooldown: 0
+          min_lr: 1e-6
 
 data:
   data_dir: "~/Documents/datasets/ShapeNetViPC-Dataset"
-  num_workers: 2
+  num_workers: 4
   view_align: true
   category: "plane"
   mini: true
@@ -126,20 +129,21 @@ data:
 
 
 # training params
-batch_size: 4
+batch_size: 16
 strategy: ddp #ddp_find_unused_parameters_false
-devices: 1
-max_epochs: 500
+devices: -1
+max_epochs: 2000
 use_ckpt: false
-use_swa: true
+use_swa: false
 use_lr_finder: false
 max_lr: 1.e-3 # if lr_finder is true, this will be used as max_lr
-log_every_n_steps: 100
+log_every_n_steps: 5
 accumulate_grad_batches: 4
 gradient_clip_val: 0.5
-check_val_every_n_epoch: 30  # Run validation once per 5 epochs
+check_val_every_n_epoch: 50  # Run validation once per 5 epochs
 fast_dev_run: false
 limit_train_batches: null
 limit_val_batches: null
 overfit_batches: 1
 resume_from_ckpt: null
+precision: "16"

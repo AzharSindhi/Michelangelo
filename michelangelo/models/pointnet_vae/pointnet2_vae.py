@@ -351,16 +351,16 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
             latent_dim_head=6,  # number of dimensions per latent self attention head
             pe=False
         )
-        self.att_noise = AttentionFusion(
-            dim=q,  # the image channels
-            depth=0,  # depth of net (self-attention - Processing的数量)
-            latent_dim=kv,  # the PC channels
-            cross_heads=1,  # number of heads for cross attention. paper said 1
-            latent_heads=8,  # number of heads for latent self attention, 8
-            cross_dim_head=32,  # number of dimensions per cross attention head
-            latent_dim_head=6,  # number of dimensions per latent self attention head
-            pe=False
-        )
+        # self.att_noise = AttentionFusion(
+        #     dim=q,  # the image channels
+        #     depth=0,  # depth of net (self-attention - Processing的数量)
+        #     latent_dim=kv,  # the PC channels
+        #     cross_heads=1,  # number of heads for cross attention. paper said 1
+        #     latent_heads=8,  # number of heads for latent self attention, 8
+        #     cross_dim_head=32,  # number of dimensions per cross attention head
+        #     latent_dim_head=6,  # number of dimensions per latent self attention head
+        #     pe=False
+        # )
 
 
         
@@ -484,44 +484,46 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         self.image_fusion_strategy = self.hparams['image_fusion_strategy']
         self.use_cross_conditioning = self.hparams['use_cross_conditioning']
         # Initialize Image processor
-        image_backbone = self.hparams["image_backbone"]
-        self.class_names = self.hparams["clip_processor"]["class_names"]
-        if image_backbone == "none" or self.image_fusion_strategy == "none":
-            self.image_processor = None
-            self.image_out_dim = 0
-        elif image_backbone == "clip":
-            self.image_processor = CLIPEncoder(class_names=self.class_names)
-            self.image_out_dim = self.image_processor.out_dim
-        elif image_backbone == "dino":
-            self.image_processor = DinoEncoder()
-            self.image_out_dim = self.image_processor.out_dim
+        # image_backbone = self.hparams["image_backbone"]
+        # self.class_names = self.hparams["clip_processor"]["class_names"]
+        # if image_backbone == "none" or self.image_fusion_strategy == "none":
+        #     self.image_processor = None
+        #     self.image_out_dim = 0
+        # elif image_backbone == "clip":
+        #     self.image_processor = CLIPEncoder(class_names=self.class_names)
+        #     self.image_out_dim = self.image_processor.out_dim
+        # elif image_backbone == "dino":
+        #     self.image_processor = DinoEncoder()
+        #     self.image_out_dim = self.image_processor.out_dim
 
 
         self.condition_net_arch_outpoints = self.hparams['condition_net_architecture']['npoint'][-1]
         self.condition_net_arch_outdim = self.hparams['condition_net_architecture']['feature_dim'][-1]
 
-        if self.image_fusion_strategy == 'condition':
-            self.conditon_img_transform = nn.Linear(self.image_out_dim + self.global_feature_dim, self.global_feature_dim)
-        elif self.image_fusion_strategy == 'second_condition':
-            self.conditon_img_transform = nn.Linear(self.image_out_dim + self.hparams["class_condition_dim"], self.hparams["class_condition_dim"])
-        elif self.image_fusion_strategy == 'latent':
-            self.cond_latent_transform = nn.Linear(self.image_out_dim + self.condition_net_arch_outdim, self.condition_net_arch_outdim)
-            self.main_latent_transform = nn.Linear(self.image_out_dim + feature_dim[-1], feature_dim[-1])
-        elif self.image_fusion_strategy == 'only_clip':
-            self.cond_latent_transform = ProjectCrossAttend(feature_dim[-1], self.image_out_dim)
-        elif self.image_fusion_strategy == "cross_attention":
-            condition_feature_dims = self.hparams['condition_net_architecture']['feature_dim']
-            self.condition_img_transform = nn.ModuleList([
-                ProjectCrossAttend(feature_dim, self.image_out_dim)
-                for feature_dim in condition_feature_dims[1:]
-            ])
+        # if self.image_fusion_strategy == 'condition':
+        #     self.conditon_img_transform = nn.Linear(self.image_out_dim + self.global_feature_dim, self.global_feature_dim)
+        # elif self.image_fusion_strategy == 'second_condition':
+        #     self.conditon_img_transform = nn.Linear(self.image_out_dim + self.hparams["class_condition_dim"], self.hparams["class_condition_dim"])
+        # elif self.image_fusion_strategy == 'latent':
+        #     self.cond_latent_transform = nn.Linear(self.image_out_dim + self.condition_net_arch_outdim, self.condition_net_arch_outdim)
+        #     self.main_latent_transform = nn.Linear(self.image_out_dim + feature_dim[-1], feature_dim[-1])
+        # elif self.image_fusion_strategy == 'only_clip':
+        #     self.cond_latent_transform = ProjectCrossAttend(feature_dim[-1], self.image_out_dim)
+        # elif self.image_fusion_strategy == "cross_attention":
+        #     condition_feature_dims = self.hparams['condition_net_architecture']['feature_dim']
+        #     self.condition_img_transform = nn.ModuleList([
+        #         ProjectCrossAttend(feature_dim, self.image_out_dim)
+        #         for feature_dim in condition_feature_dims[1:]
+        #     ])
         
-        decoder_feature_dim = arch['decoder_feature_dim']#[128, 128, 256, 256, 512]
-        self.transformations = []
-        for i in range(len(decoder_feature_dim) - 1):
-            self.transformations.append(nn.Linear(decoder_feature_dim[i], decoder_feature_dim[i+1], device="cuda"))
+        # decoder_feature_dim = arch['decoder_feature_dim']#[128, 128, 256, 256, 512]
+        # self.transformations = []
+        # for i in range(len(decoder_feature_dim) - 1):
+        #     self.transformations.append(nn.Linear(decoder_feature_dim[i], decoder_feature_dim[i+1], device="cuda"))
 
-    
+
+    def set_unused_params(self):
+        self.att_noise = None    
     def reset_cond_features(self):
         # return
         self.l_uvw = None
@@ -728,10 +730,16 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         l_features_out = self.decode_main(l_xyz, l_features, condition_emb=global_feature)[0]
         l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
 
+        out_feature = torch.cat([l_features_out.transpose(1,2), uvw, incomplete_pointcloud], dim=-1)
+        out = self.fc_layer_noise(out_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
+        
+        out_cond_feature = torch.cat([l_cond_features_out.transpose(1,2), uvw, incomplete_pointcloud], dim=-1)
+        out_partial = self.fc_layer_c(out_cond_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
+
 
         # transpose to [bs, m, d]
         if return_latents:
-            return global_feature, l_features_out.permute(0, 2, 1), l_cond_features_out.permute(0, 2, 1)
+            return global_feature, out, out_partial
         else:
             return global_feature
 
@@ -757,14 +765,7 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
         return l_cond_features_out.permute(0, 2, 1)
 
-    def decode(self, out_feature: List[torch.FloatTensor], l_cond_feature: List[torch.FloatTensor], incomplete_pointcloud: torch.FloatTensor):
-        uvw, _ = self._prepare_condition_inputs(incomplete_pointcloud)
-        out_feature = torch.cat([out_feature, uvw, incomplete_pointcloud], dim=-1)
-        out = self.fc_layer_noise(out_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
-        
-        out_cond_feature = torch.cat([l_cond_feature, uvw, incomplete_pointcloud], dim=-1)
-        out_partial = self.fc_layer_c(out_cond_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
-
+    def decode(self, out: torch.FloatTensor, out_partial: torch.FloatTensor, incomplete_pointcloud: torch.FloatTensor):
         return out, out_partial
     
     def forward(

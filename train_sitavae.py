@@ -16,13 +16,17 @@ from torch.backends import cudnn
 from michelangelo.models.tsal.asl_pl_module import AlignedShapeAsLatentPLModule
 from michelangelo.callbacks.pointcloud_write import PointCloudSaver
 
-from pytorch_lightning.loggers import MLFlowLogger
+from pytorch_lightning.loggers.wandb import WandbLogger
 from michelangelo.data.dataset import get_dataset
 from tqdm import tqdm
 from pytorch_lightning.tuner import lr_finder
 import time
 import argparse
 from michelangelo.callbacks.logger_callbacks import GitInfoLogger
+import torch
+import os
+
+torch.set_float32_matmul_precision("medium")
 
 class ShapeNetViPCDataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int = 4, num_workers: int = 4,
@@ -73,14 +77,20 @@ def set_seed(seed=42):
 def train(args):
     # seed everything
     set_seed(42)
-    
+    current_rank = os.getenv("LOCAL_RANK", 0)
     # Load config
     config_path = "configs/aligned_shape_latents/pointnetvae-256.yaml"
     config = OmegaConf.load(config_path)
+    config.batch_size = args.batch_size
+    config.overfit_batches = args.overfit_batches
+    config.check_val_every_n_epoch = args.check_val_every_n_epoch
     if config.overfit_batches > 0:
         config.model.dropout = 0.0
-    if not args.use_contrastive:
+    if args.no_contrastive:
         config.model.params.loss_cfg.params.contrast_weight = 0.0
+        config.model.params.aligned_module_cfg.params.use_contrastive = False
+    else:
+        config.model.params.aligned_module_cfg.params.use_contrastive = True
     # if args.use_clip_cond:
     #     config.model.params.aligned_module_cfg.target = "michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule"
     # else:
@@ -88,15 +98,15 @@ def train(args):
     # run name based on time and process id and prefix
     run_name = f"{args.run_name}_{time.strftime('%Y%m%d-%H%M')}"
     git_logger = GitInfoLogger()
-    commits_info = None #git_logger.get_git_info()
-    mlf_logger = MLFlowLogger(experiment_name=args.experiment_name, run_name=run_name, tags=commits_info)
+    commits_info = git_logger.get_git_info()
+    git_tags = [f"{key}: {value}" for key, value in commits_info.items()]
+    logger = WandbLogger(project=args.experiment_name, name=run_name, tags=git_tags, config=dict(config))
     # for logging git commits
-    # git_logger.log_git_diff(mlf_logger)
-    # mlf_logger.log_hyperparams(config)
-    # mlf_logger.log_hyperparams(vars(args))
+    git_logger.log_git_diff(logger)
+    logger.log_hyperparams(config)
+    logger.log_hyperparams(vars(args))
 
     # return 
-    print(f"INFO: Run name: {run_name}, run_id: {mlf_logger.run_id}")
     # Initialize model
     ignore_keys = ["model.shape_model.geo_decoder"] # retraining only point cloud reconstruction
     # ignore_keys = []
@@ -131,7 +141,7 @@ def train(args):
     # Setup data
     datamodule = ShapeNetViPCDataModule(
         data_dir=config.data.data_dir,
-        batch_size=config.batch_size,
+        batch_size=args.batch_size,
         num_workers=config.data.num_workers,
         view_align=config.data.view_align,
         category=config.data.category,
@@ -148,8 +158,7 @@ def train(args):
     
     # Callbacks
     # mlflow run id
-    dirpath = f"checkpoints_runs/{run_name}_{mlf_logger.run_id}"
-    print(f"INFO: Checkpoints directory: {dirpath}")
+    dirpath = f"checkpoints_runs/{run_name}_{logger.experiment.id}"
     checkpoint_callback = ModelCheckpoint(
         monitor='val/total_loss',
         dirpath=dirpath,
@@ -160,16 +169,21 @@ def train(args):
     )
     
     lr_monitor = LearningRateMonitor(logging_interval='step')
-    print(f"INFO: Visualization directory: out_pointclouds/{run_name}_{mlf_logger.run_id}")
-
-    # Point cloud saver callback
-    pc_saver = PointCloudSaver(
-        save_dir=f"out_pointclouds/{run_name}_{mlf_logger.run_id}",
-        max_samples=2,  # Number of samples to save per epoch
-        every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
-    )
     
-    callbacks = [lr_monitor, pc_saver, checkpoint_callback]
+    if current_rank == 0:
+        print(f"INFO: Checkpoints directory: {dirpath}")
+        print(f"INFO: Run name: {run_name}, run_id: {logger.experiment.id}")
+        print(f"INFO: Visualization directory: out_pointclouds/{run_name}_{logger.experiment.id}")
+        # Point cloud saver callback
+        pc_saver = PointCloudSaver(
+            save_dir=f"out_pointclouds/{run_name}_{logger.experiment.id}",
+            max_samples=2,  # Number of samples to save per epoch
+            every_n_epochs=config.check_val_every_n_epoch  # Save every epoch
+        )
+        callbacks = [lr_monitor, pc_saver, checkpoint_callback]
+    else:
+        callbacks = [lr_monitor, checkpoint_callback]
+    
     if config.use_swa:
         swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
         callbacks.append(swa_callback)
@@ -185,12 +199,14 @@ def train(args):
         log_every_n_steps=config.log_every_n_steps,
         accumulate_grad_batches=config.accumulate_grad_batches,
         gradient_clip_val=config.gradient_clip_val,
-        logger=mlf_logger,
+        logger=logger,
         check_val_every_n_epoch=config.check_val_every_n_epoch,  # Run validation once per 5 epochs
         fast_dev_run=config.fast_dev_run,
         limit_train_batches=config.limit_train_batches,
         limit_val_batches=config.limit_val_batches,
         overfit_batches=config.overfit_batches,
+        precision=config.precision,
+        # find_unused_parameters=True
     )
 
     if config.use_lr_finder:
@@ -213,13 +229,16 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", "-r",type=str, default="test")
     parser.add_argument("--experiment_name", "-e",type=str, default="pointnetvae")
     parser.add_argument("--use_clip_cond", "-c", action="store_true")
-    parser.add_argument("--use_contrastive", action="store_true")
+    parser.add_argument("--no_contrastive", action="store_true")
+    parser.add_argument("--batch_size", "-b", type=int, default=16)
+    parser.add_argument("--overfit_batches", "-o", type=int, default=0)
+    parser.add_argument("--check_val_every_n_epoch", "-v", type=int, default=50)
     args = parser.parse_args()
     if args.use_clip_cond:
         args.run_name += "_clip"
     else:
         args.run_name += "_dino"
-    if args.use_contrastive:
+    if not args.no_contrastive:
         args.run_name += "_contrastive"
     else:
         args.run_name += "_nocontrast"

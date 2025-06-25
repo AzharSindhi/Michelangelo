@@ -318,10 +318,10 @@ class ContrastKLNearFar(nn.Module):
         gt_pc = gt_pc.unsqueeze(1).expand(-1, K, -1, -1).flatten(1, 2)
         # repeat gt such that it has same number of points
         # shape reconstruction
-        ch_dist_pc, _ = chamfer_distance(gt_pc, reconstructed_pc)
+        ch_dist_pc, _ = chamfer_distance(gt_pc.float(), reconstructed_pc.float())
         reconst_loss_pc = ch_dist_pc * self.chamfer_weight_pc
 
-        ch_dist_partial, _ = chamfer_distance(gt_partial, reconstructed_pc) # also make it predict full point cloud
+        ch_dist_partial, _ = chamfer_distance(gt_partial.float(), reconstructed_pc.float()) # also make it predict full point cloud
         reconst_loss_partial = ch_dist_partial * self.chamfer_weight_partial
 
 
