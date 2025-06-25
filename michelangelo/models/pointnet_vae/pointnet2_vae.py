@@ -712,10 +712,22 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
 
         # Encode
         l_xyz, l_features = self.encode_main(xyz, feats, condition_emb=global_feature)
-        l_features_out = self.decode_main(l_xyz, l_features, condition_emb=global_feature)[0]
-        
         l_xyz_cond, l_cond_features = self.encode_cond(uvw, cond_feats)
+
+        # bidirectional cross attention
+        # l_features[-1] = self.att_noise(
+        #     l_cond_features[-1].permute(0, 2, 1),
+        #     queries_encoder=l_features[-1].permute(0, 2, 1)
+        # ).permute(0, 2, 1).contiguous()
+
+        l_cond_features[-1] = self.att_c(
+            l_features[-1].permute(0, 2, 1),
+            queries_encoder=l_cond_features[-1].permute(0, 2, 1)
+        ).permute(0, 2, 1).contiguous()
+        
+        l_features_out = self.decode_main(l_xyz, l_features, condition_emb=global_feature)[0]
         l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
+
 
         # transpose to [bs, m, d]
         if return_latents:
@@ -747,16 +759,11 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
 
     def decode(self, out_feature: List[torch.FloatTensor], l_cond_feature: List[torch.FloatTensor], incomplete_pointcloud: torch.FloatTensor):
         uvw, _ = self._prepare_condition_inputs(incomplete_pointcloud)
-        # l_xyz_cond, l_cond_features = self.encode_cond(
-        #     uvw, cond_feats,
-        # )
-
-        # cond_embed = self._get_global_condition_embedding(incomplete_pointcloud)
-
-        # Process outputs
         out_feature = torch.cat([out_feature, uvw, incomplete_pointcloud], dim=-1)
         out = self.fc_layer_noise(out_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
-        out_partial = self.fc_layer_c(l_cond_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
+        
+        out_cond_feature = torch.cat([l_cond_feature, uvw, incomplete_pointcloud], dim=-1)
+        out_partial = self.fc_layer_c(out_cond_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
 
         return out, out_partial
     
