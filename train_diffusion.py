@@ -26,13 +26,16 @@ import argparse
 from michelangelo.models.asl_diffusion.clip_asl_diffuser_pl_module import ClipASLDiffuser
 from michelangelo.callbacks.logger_callbacks import GitInfoLogger
 
+torch.set_float32_matmul_precision('medium')
+
 class ShapeNetViPCDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir: str, batch_size: int = 4, num_workers: int = 4,
+    def __init__(self, data_dir: str, batch_size: int = 4, val_batch_size: int = 4, num_workers: int = 4,
                  view_align: bool = True, category: str = "plane", mini: bool = True,
                  image_size: int = 224):
         super().__init__()
         self.data_dir = os.path.expanduser(data_dir)
         self.batch_size = batch_size
+        self.val_batch_size = val_batch_size
         self.num_workers = num_workers
         self.view_align = view_align
         self.category = category
@@ -54,7 +57,7 @@ class ShapeNetViPCDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         return DataLoader(
             self.val_dataset,
-            batch_size=self.batch_size,
+            batch_size=self.val_batch_size,
             num_workers=self.num_workers,
             shuffle=False,
         )
@@ -75,6 +78,7 @@ def train(args):
     set_seed(42)
     
     # Load config
+    current_rank = os.getenv("LOCAL_RANK", 0)
     config_path = "configs/image_cond_diffuser_asl/image-ASLDM-256.yaml"
     config = OmegaConf.load(config_path)
     if args.use_clip_cond:
@@ -102,6 +106,7 @@ def train(args):
     datamodule = ShapeNetViPCDataModule(
         data_dir=config.data.data_dir,
         batch_size=config.batch_size,
+        val_batch_size=config.val_batch_size,
         num_workers=config.data.num_workers,
         view_align=config.data.view_align,
         category=config.data.category,
@@ -110,7 +115,6 @@ def train(args):
     )
 
     dirpath = f"diffusion_checkpoints/{run_name}_{logger.experiment.id}"
-    print(f"INFO: Save direcotry:{dirpath}")
     checkpoint_callback = ModelCheckpoint(
         monitor='val/total_loss',
         dirpath=dirpath,
@@ -121,15 +125,22 @@ def train(args):
     )
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
     vis_dir = f'out_sampled_pcs/{run_name}_{logger.experiment.id}'
-    print(f"INFO: visualization directory:{vis_dir}")
-    # Point cloud sampler callback
-    pc_sampler = PointCloudSampler(
-        save_dir=vis_dir,
-        max_samples=4,  # Number of samples to save per epoch
-        every_n_epochs=args.check_val_every_n_epoch  # Save every epoch
-    )
+    if current_rank == 0:
+        # Point cloud sampler callback
+        pc_sampler = PointCloudSampler(
+            save_dir=vis_dir,
+            max_samples=4,  # Number of samples to save per epoch
+            every_n_epochs=args.check_val_every_n_epoch * 3  # Save every epoch
+        )
+        print(f"INFO: Save direcotry:{dirpath}")
+        print(f"INFO: visualization directory:{vis_dir}")
+        print(f"INFO: Checkpoint directory: {dirpath}")
+
+
     # bs_finder = BatchSizeFinder(mode='binsearch', init_val=config.batch_size)
-    callbacks = [lr_monitor, checkpoint_callback, pc_sampler]
+    callbacks = [lr_monitor, checkpoint_callback]
+    if current_rank == 0:
+        callbacks.append(pc_sampler)
     if args.use_swa:
         swa_callback = StochasticWeightAveraging(swa_lrs=1e-2)
         callbacks.append(swa_callback)
@@ -151,6 +162,7 @@ def train(args):
         limit_train_batches=args.limit_train_batches,
         limit_val_batches=args.limit_val_batches,
         overfit_batches=args.overfit_batches,
+        precision=config.precision,
     )
 
     if args.use_lr_finder:
@@ -170,8 +182,8 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_name", "-r",type=str, default="scratch")
-    parser.add_argument("--experiment_name", "-e", type=str, default="lightning_logs")
+    parser.add_argument("--run_name", "-r",type=str, default="test")
+    parser.add_argument("--experiment_name", "-e", type=str, default="pointnet_diffusion")
     parser.add_argument("--use_clip_cond", action="store_true")
     parser.add_argument("--overfit_batches", type=float, default=0.0)
     parser.add_argument("--fast_dev_run", action="store_true")
@@ -187,7 +199,7 @@ if __name__ == "__main__":
     parser.add_argument("--limit_train_batches", type=float, default=None)
     parser.add_argument("--limit_val_batches", type=float, default=None)
     parser.add_argument("--limit_test_batches", type=float, default=None)
-    parser.add_argument("--batch_size", type=int, default=48)
+    parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--max_epochs", type=int, default=500)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()

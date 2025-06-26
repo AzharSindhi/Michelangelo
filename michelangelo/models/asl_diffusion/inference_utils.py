@@ -13,6 +13,7 @@ def ddim_sample(ddim_scheduler: DDIMScheduler,
                 diffusion_model: torch.nn.Module,
                 shape: Union[List[int], Tuple[int]],
                 cond: torch.FloatTensor,
+                partial_features: torch.FloatTensor,
                 steps: int,
                 eta: float = 0.0,
                 guidance_scale: float = 3.0,
@@ -49,12 +50,12 @@ def ddim_sample(ddim_scheduler: DDIMScheduler,
     # reverse
     for i, t in enumerate(tqdm(timesteps, disable=disable_prog, desc="DDIM Sampling:", leave=False)):
         # expand the latents if we are doing classifier free guidance
+        latents_cond = torch.cat((latents, partial_features), dim=-1)
         latent_model_input = (
-            torch.cat([latents] * 2)
+            torch.cat([latents_cond] * 2)
             if do_classifier_free_guidance
-            else latents
+            else latents_cond
         )
-        # latent_model_input = scheduler.scale_model_input(latent_model_input, t)
         # predict the noise residual
         timestep_tensor = torch.tensor([t], dtype=torch.long, device=device)
         timestep_tensor = timestep_tensor.expand(latent_model_input.shape[0])

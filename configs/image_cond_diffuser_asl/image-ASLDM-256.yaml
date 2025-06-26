@@ -4,28 +4,93 @@ model:
     first_stage_config:
       target: michelangelo.models.tsal.asl_pl_module.AlignedShapeAsLatentPLModule
       params:
-        ckpt_path: "checkpoints_runs/vae_nocontrast_dino_20250608-0024_d94dbf748d754c0e849c4621086fa69f/sita_vae-best.ckpt"
+        ckpt_path: "checkpoints_runs/pointnetvae_dino_contrast_dino_contrastive_20250626-1050_hkze3vhy/last.ckpt"
         shape_module_cfg:
-          target: michelangelo.models.tsal.sal_perceiver.AlignedShapeLatentPerceiver
+          target: michelangelo.models.pointnet_vae.pointnet2_vae.PointNet2CloudCondition
           params:
-            num_latents: &num_latents 256
-            embed_dim: &embed_dim 64
-            point_feats: 3   # normal
-            num_freqs: 8
-            include_pi: false
-            heads: 8 #12
-            width: 768
-            num_encoder_layers: 4 #8
-            num_decoder_layers: 8 #16
-            use_ln_post: true
-            init_scale: 0.25
-            qkv_bias: false
-            use_checkpoint: false
-            # learning_rate: 1.e-4 # set here
+            model_name: "pointnet"
+            in_fea_dim: 3
+            partial_in_fea_dim: 0
+            out_dim: 3
+            include_t: false
+            t_dim: 128
+            "model.use_xyz": true
+            attach_position_to_input_feature: true
+            include_abs_coordinate: true
+            include_center_coordinate: true
+            record_neighbor_stats: false
+            bn_first: false
+            bias: true
+            res_connect: true
+            map_type: "cross_attention"
+            condition_loss: true
+            image_fusion_strategy: "none"
+            include_class_condition: false
+            image_backbone: "none"
+            use_cross_conditioning: false
+            num_class: 256
+            class_condition_dim: 128
+            gamma: 0.5
+            scale_factor: 1
+            bn: true
+            include_local_feature: true
+            include_global_feature: true
+            global_feature_remove_last_activation: false
+            pnet_global_feature_architecture:
+              - [3, 128, 256]
+              - [512, 1024]
+            attention_setting:
+              use_attention_module: true
+              attention_bn: true
+              transform_grouped_feat_out: true
+              last_activation: true
+              add_attention_to_FeatureMapper_module: true
+            architecture:
+              npoint: [2048, 512, 128, 32]
+              radius: [0.1, 0.2, 0.4, 0.8]
+              neighbor_definition: "radius"
+              nsample: [32, 32, 32, 32]
+              feature_dim: [128, 128, 256, 256, 512]
+              mlp_depth: 3
+              decoder_feature_dim: [128, 128, 256, 256, 512]
+              include_grouper: false
+              decoder_mlp_depth: 2
+              use_knn_FP: true
+              K: 8
+            condition_net_architecture:
+              npoint: [2048, 512, 128, 32]
+              radius: [0.1, 0.2, 0.4, 0.8]
+              neighbor_definition: "radius"
+              nsample: [32, 32, 32, 32]
+              feature_dim: [128, 128, 256, 256, 512]
+              mlp_depth: 3
+              decoder_feature_dim: [128, 128, 256, 256, 512]
+              include_grouper: false
+              decoder_mlp_depth: 2
+              use_knn_FP: true
+              K: 8
+            feature_mapper_architecture:
+              neighbor_definition: "radius"
+              encoder_feature_map_dim: [32, 32, 64, 64]
+              encoder_mlp_depth: 2
+              encoder_radius: [0.1, 0.2, 0.4, 0.8]
+              encoder_nsample: [32, 32, 32, 32]
+              decoder_feature_map_dim: [32, 32, 64, 64, 128]
+              decoder_mlp_depth: 2
+              decoder_radius: [0.1, 0.2, 0.4, 0.8, 1.6]
+              decoder_nsample: [32, 32, 32, 32, 32]
+            clip_processor:
+              model_name: "clip_processor"
+              clip_model_name: "clip_vit_b_32"
+              clip_model_path: ""
+              clip_dim: 512
+              class_names: ["bathtub", "bed", "chair", "desk", "dresser", "monitor", "night_stand", "sofa", "table", "toilet"]
+
         aligned_module_cfg:
-          target: michelangelo.models.tsal.clip_asl_module.CLIPAlignedShapeAsLatentModule
+          target: michelangelo.models.tsal.dino_asl_module.DinoAlignedShapeAsLatentModule
           params:
-            clip_model_version: "openai/clip-vit-large-patch14"
+            clip_model_version: "facebook/dinov2-large"
+            use_contrastive: true
         
         numpoints: 4096
         loss_cfg:
@@ -53,9 +118,9 @@ model:
     denoiser_cfg:
       target: michelangelo.models.asl_diffusion.asl_udt.ConditionalASLUDTDenoiser
       params:
-        input_channels: *embed_dim
-        output_channels: *embed_dim
-        n_ctx: *num_latents
+        input_channels: 137 # 128 + 3 + 3 +  (outdim, uvw, incomplete points)
+        output_channels: 3
+        n_ctx: 4096
         width: 768
         layers: 6   # 2 * 6 + 1 = 13
         heads: 12
@@ -66,7 +131,7 @@ model:
 
     scheduler_cfg:
       guidance_scale: 7.5
-      num_inference_steps: 50
+      num_inference_steps: 100
       eta: 0.0
 
       noise:
@@ -132,8 +197,9 @@ clip_cond_stage_config:
     image_size: 224
 
 # training params
-batch_size: 48
-max_epochs: 500
+batch_size: 8
+val_batch_size: 8
+max_epochs: 2000
 strategy: ddp_find_unused_parameters_false
 devices: -1
 use_ckpt: false
@@ -149,3 +215,4 @@ limit_train_batches: null
 limit_val_batches: null
 overfit_batches: 0.0
 resume_from_ckpt: null
+precision: "16"

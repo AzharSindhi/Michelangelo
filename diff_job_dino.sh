@@ -1,16 +1,13 @@
 #!/bin/bash
-#SBATCH --gres=gpu:4
-#SBATCH --partition=small
-#SBATCH --time=1-00
+#SBATCH --gres=gpu:3
+#SBATCH --partition=48G
+#SBATCH --time=2-00
 #SBATCH --mail-user=azhar.hussian@fau.de
 #SBATCH --mail-type=ALL
-#SBATCH --job-name=job_diff_dino_nocontrast
+#SBATCH --job-name=job_diff_dino_contrast
 #SBATCH --output=/home/ez48awud/azhar/code/Michelangelo/slurm_logs/%x_%j.out
 #SBATCH --error=/home/ez48awud/azhar/code/Michelangelo/slurm_logs/%x_%j.err
 
-source ~/.bashrc
-module load cuda
-conda activate michelo
-cd /home/ez48awud/azhar/code/Michelangelo/
+conda activate michelo_poitnet
 
-python train_diffusion.py -r lrfixed1e-4 -e clipvsdino_nocontrast
+python train_diffusion.py -r pointnet_diff_dino_contrast

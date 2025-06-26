@@ -733,10 +733,9 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
         # out = self.fc_layer_noise(out_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
         
         out_cond_feature = torch.cat([l_cond_features_out.transpose(1,2), uvw, incomplete_pointcloud], dim=-1)
+        # transpose to [bs, m, d]
         out_partial = self.fc_layer_c(out_cond_feature.transpose(1,2)).permute(0,2,1) # reconstructed output
 
-
-        # transpose to [bs, m, d]
         if return_latents:
             return global_feature, out_partial
         else:
@@ -757,52 +756,17 @@ class PointNet2CloudCondition(PointNet2SemSegSSG):
 
         return kl_embed, posterior
     
-    def get_cond_features(self, incomplete_pointcloud):
+    def encode(self, incomplete_pointcloud, sample_posterior=True):
         uvw, cond_feats = self._prepare_condition_inputs(incomplete_pointcloud)
-        global_feature = self._get_global_condition_embedding(incomplete_pointcloud)
+        global_feature = self._get_global_condition_embedding(uvw)
         l_xyz_cond, l_cond_features = self.encode_cond(uvw, cond_feats)
         l_cond_features_out = self.decode_cond(l_xyz_cond, l_cond_features, global_feature)[0]
-        return l_cond_features_out.permute(0, 2, 1)
+        out_cond_feature = torch.cat([l_cond_features_out.transpose(1,2), uvw, incomplete_pointcloud], dim=-1)
+        return global_feature, out_cond_feature, None
 
     def decode(self, out_partial: torch.FloatTensor):
-        return out_partial
+        if out_partial.shape[-1] > 3:
+            return out_partial[:, :, :3]
+        else:
+            return out_partial 
     
-    def forward(
-            self,
-            incomplete_pointcloud,
-            image=None,
-    ):
-        # Prepare inputs and get initial features
-        xyz, feats, uvw, cond_feats, i_pc = self._prepare_inputs(
-            incomplete_pointcloud
-        )
-        
-        # Encode
-        l_xyz, l_features = self.encode_main(
-            xyz, feats,
-        )
-        l_xyz_cond, l_cond_features = self.encode_cond(
-            uvw, cond_feats,
-        )
-
-        # bidirectional cross attention
-        # l_cond_features[-1] = self.att_c(
-        #     l_features[-1].permute(0, 2, 1),
-        #     queries_encoder=l_cond_features[-1].permute(0, 2, 1)
-        # ).permute(0, 2, 1).contiguous()
-
-        l_features[-1] = self.att_noise(
-                l_cond_features[-1].permute(0, 2, 1),
-                queries_encoder=l_features[-1].permute(0, 2, 1)
-            ).permute(0, 2, 1).contiguous()
-        
-        # Decode
-        out_feature = self.decode_main(
-            l_xyz_cond, l_features,
-        )
-        
-        # Process outputs
-        out_feature = torch.cat([out_feature.transpose(1,2), i_pc, xyz], dim=-1).permute(0,2,1)
-        out = self.fc_layer_noise(out_feature).permute(0,2,1) # reconstructed output
-        
-        return out

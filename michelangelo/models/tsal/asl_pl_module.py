@@ -150,13 +150,10 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         
         return embed_outputs, recon_pc_partial, posterior
 
-    def encode(self, surface: torch.FloatTensor, sample_posterior=True):
-
-        pc = surface[..., 0:3]
-        feats = surface[..., 3:6]
+    def encode(self, incomplete_points: torch.FloatTensor, sample_posterior=True):
 
         shape_embed, shape_zq, posterior = self.model.shape_model.encode(
-            pc=pc, feats=feats, sample_posterior=sample_posterior
+            incomplete_points, sample_posterior=sample_posterior
         )
 
         return shape_zq
@@ -171,8 +168,7 @@ class AlignedShapeAsLatentPLModule(pl.LightningModule):
         
         # generate point cloud from latent (decoder)
 
-        latents = self.model.shape_model.decode(z_q)  # latents: [bs, num_latents, dim]
-        recon_pc = self.model.shape_model.query_geometry(incomplete_points, latents)
+        recon_pc = self.model.shape_model.decode(z_q)  # latents: [bs, num_latents, dim]
         return recon_pc
 
     def training_step(self, batch: Dict[str, torch.FloatTensor],

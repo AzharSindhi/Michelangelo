@@ -78,17 +78,18 @@ class ClipASLDiffuser(pl.LightningModule):
         self.noise_scheduler: DDPMScheduler = instantiate_from_config(scheduler_cfg.noise)
         self.denoise_scheduler: SchedulerType = instantiate_from_config(scheduler_cfg.denoise)
 
-        self.numpoints = self.first_stage_model.numpoints
+        self.numpoints = denoiser_cfg.params.n_ctx
+        self.latent_shape = (self.numpoints, denoiser_cfg.params.output_channels)
 
-        image_embedding_dim = 1024 #self.cond_stage_model.model.config.hidden_size
-        shape_embedding_dim = first_stage_config.params.shape_module_cfg.params.embed_dim
+        # image_embedding_dim = 1024 #self.cond_stage_model.model.config.hidden_size
+        # shape_embedding_dim = 512 #first_stage_config.params.shape_module_cfg.params.embed_dim
 
-        self.cross_attn = nn.MultiheadAttention(shape_embedding_dim, kdim=image_embedding_dim,
-                                                vdim=image_embedding_dim,
-                                                num_heads=4,
-                                                batch_first=True)
+        # self.cross_attn = nn.MultiheadAttention(shape_embedding_dim, kdim=image_embedding_dim,
+        #                                         vdim=image_embedding_dim,
+        #                                         num_heads=4,
+        #                                         batch_first=True)
         
-        self.proj_condition = nn.Linear(shape_embedding_dim, image_embedding_dim)
+        # self.proj_condition = nn.Linear(shape_embedding_dim, image_embedding_dim)
         # 5. loss configures
         self.loss_cfg = loss_cfg
 
@@ -170,18 +171,18 @@ class ClipASLDiffuser(pl.LightningModule):
         return [optimizer], schedulers
 
     @torch.no_grad()
-    def encode_first_stage(self, surface: torch.FloatTensor, sample_posterior=True):
+    def encode_first_stage(self, incomplete_points: torch.FloatTensor, sample_posterior=True):
 
-        z_q = self.first_stage_model.encode(surface, sample_posterior)
+        z_q = self.first_stage_model.encode(incomplete_points, sample_posterior)
         z_q = self.z_scale_factor * z_q
 
         return z_q
 
     @torch.no_grad()
-    def decode_first_stage(self, z_q: torch.FloatTensor, volume_queries: torch.FloatTensor, **kwargs):
+    def decode_first_stage(self, z_q: torch.FloatTensor, incomplete_points: torch.FloatTensor, **kwargs):
 
         z_q = 1. / self.z_scale_factor * z_q
-        latents = self.first_stage_model.decode(z_q, volume_queries=volume_queries, **kwargs)
+        latents = self.first_stage_model.decode(z_q, incomplete_points=incomplete_points, **kwargs)
         return latents
 
     @rank_zero_only
@@ -254,13 +255,9 @@ class ClipASLDiffuser(pl.LightningModule):
 
         """
 
-        latents = self.encode_first_stage(batch[self.first_stage_key])
-        image_features = self.cond_stage_model.encode(batch[self.cond_stage_key]) #[bs, 257, 1024]
-        conditions = self.encode_first_stage(batch["incomplete_points"]) #[bs, 256, 64]
-
-        # cross attent image features with partial latents
-        conditions, _ = self.cross_attn(conditions, image_features, image_features)
-        conditions = self.proj_condition(conditions)
+        latents = batch[self.first_stage_key][..., :3] #self.encode_first_stage(batch[self.first_stage_key])
+        conditions = self.cond_stage_model.encode(batch[self.cond_stage_key]) #[bs, 257, 1024]
+        partial_pc = self.encode_first_stage(batch["incomplete_points"][..., :3]) #[bs, 256, 64]
 
         # Sample noise that we"ll add to the latents
         # [batch_size, n_token, latent_dim]
@@ -276,7 +273,8 @@ class ClipASLDiffuser(pl.LightningModule):
         timesteps = timesteps.long()
         # Add noise to the latents according to the noise magnitude at each timestep
         noisy_z = self.noise_scheduler.add_noise(latents, noise, timesteps)
-
+        # concatenate to latents
+        noisy_z = torch.cat([noisy_z, partial_pc], dim=-1)
         # diffusion model forward
         noise_pred = self.model(noisy_z, timesteps, conditions)
 
@@ -367,16 +365,12 @@ class ClipASLDiffuser(pl.LightningModule):
 
         # conditional encode
         xc = batch[self.cond_stage_key]
-        xp = batch[self.incomplete_points_key] #TO-DO: set key to config
+        xp = batch[self.incomplete_points_key][..., :3] #TO-DO: set key to config
 
         # print(self.first_stage_model.device, self.cond_stage_model.device, self.device)
 
-        image_features = self.cond_stage_model(xc)
-        cond = self.encode_first_stage(xp)
-        cond, _ = self.cross_attn(cond, image_features, image_features)
-        cond = self.proj_condition(cond)
-
-        volume_queries = xp[:, :,  :3]
+        cond = self.cond_stage_model(xc)
+        partial_features = self.encode_first_stage(xp)
 
         if do_classifier_free_guidance:
             un_cond = torch.zeros_like(cond)#self.cond_stage_model.unconditional_embedding(batch_size=len(xc))
@@ -390,8 +384,9 @@ class ClipASLDiffuser(pl.LightningModule):
                 sample_loop = ddim_sample(
                     self.denoise_scheduler,
                     self.model,
-                    shape=self.first_stage_model.latent_shape,
+                    shape=self.latent_shape,
                     cond=cond,
+                    partial_features=partial_features,
                     steps=steps,
                     guidance_scale=guidance_scale,
                     do_classifier_free_guidance=do_classifier_free_guidance,
@@ -401,14 +396,15 @@ class ClipASLDiffuser(pl.LightningModule):
                 )
                 for sample, t in sample_loop:
                     latents = sample
-                outputs.append(self.decode_first_stage(latents, volume_queries, **kwargs))
+                outputs.append(self.decode_first_stage(latents, xp, **kwargs))
         else:
 
             sample_loop = ddim_sample(
                 self.denoise_scheduler,
                 self.model,
-                shape=self.first_stage_model.latent_shape,
+                shape=self.latent_shape,
                 cond=cond,
+                partial_features=partial_features,
                 steps=steps,
                 guidance_scale=guidance_scale,
                 do_classifier_free_guidance=do_classifier_free_guidance,
@@ -422,7 +418,7 @@ class ClipASLDiffuser(pl.LightningModule):
             for sample, t in sample_loop:
                 latents = sample
                 if i % iter_size == 0 or i == steps - 1:
-                    outputs.append(self.decode_first_stage(latents, volume_queries, **kwargs))
+                    outputs.append(self.decode_first_stage(latents, xp, **kwargs))
                 i += 1
 
         return outputs

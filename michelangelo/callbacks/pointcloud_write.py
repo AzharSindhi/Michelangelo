@@ -41,7 +41,7 @@ class PointCloudSaver(Callback):
             return
         # pl_module.eval()
         outputs_pc = pl_module.last_train_output_pc
-        outputs_partial = pl_module.last_train_output_pc_partial
+        outputs_partial = outputs_pc #pl_module.last_train_output_pc_partial
         self.save_batch(batch, outputs_pc, outputs_partial, "train", trainer.current_epoch)
         # pl_module.train()
 
@@ -50,12 +50,12 @@ class PointCloudSaver(Callback):
             return
         # pl_module.eval()
         outputs_pc = pl_module.last_val_output_pc
-        outputs_partial = pl_module.last_val_output_pc_partial
+        outputs_partial = outputs_pc #pl_module.last_val_output_pc_partial
         self.save_batch(batch, outputs_pc, outputs_partial, "test", trainer.current_epoch)
     
     def on_predict_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
         outputs_pc = pl_module.last_predict_output_pc
-        outputs_partial = pl_module.last_predict_output_pc_partial
+        outputs_partial = outputs_pc #pl_module.last_predict_output_pc_partial
         self.save_batch(batch, outputs_pc, outputs_partial, "predict", trainer.current_epoch)
 
     def save_batch(self, batch, outputs_pc, outputs_partial, name, current_epoch):
